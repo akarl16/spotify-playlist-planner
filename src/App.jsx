@@ -187,7 +187,7 @@ const getPlaylists = async () => {
 
 function App() {
   const clientId = "c4145d13614447e9b3bcd287499086f4";
-  const redirectUri = "https://h86650.csb.app/";
+  const redirectUri = window.location;
   const scopes = ["playlist-read-collaborative", "user-modify-playback-state"];
   const loginUrl = encodeURI(
     `https://accounts.spotify.com/authorize?client_id=${clientId}&redirect_uri=${redirectUri}&scope=${scopes.join(
