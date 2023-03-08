@@ -4,7 +4,11 @@ import SpotifyWebApi from "spotify-web-api-js";
 import React, { useState, useEffect, Fragment } from "react";
 import Backdrop from "@mui/material/Backdrop";
 import CircularProgress from "@mui/material/CircularProgress";
-import { DataGrid } from "@mui/x-data-grid";
+import {
+  DataGrid,
+  GridToolbarContainer,
+  GridToolbarQuickFilter
+} from "@mui/x-data-grid";
 import AppBar from "@mui/material/AppBar";
 import Toolbar from "@mui/material/Toolbar";
 import IconButton from "@mui/material/IconButton";
@@ -112,6 +116,13 @@ const millisToMinutesAndSeconds = (millis) => {
   return minutes + ":" + (seconds < 10 ? "0" : "") + seconds;
 };
 
+const durationToMillis = (duration) => {
+  const durationParts = duration.split(":");
+  const millis = durationParts[0] * 60000 + durationParts[1] * 1000;
+  console.debug("millis", millis);
+  return millis;
+};
+
 const getAllTracks = async (_playlistId) => {
   console.debug("Retrieving tracks");
   const tracks = [];
@@ -139,55 +150,63 @@ const getAllTracks = async (_playlistId) => {
 };
 
 const getPlaylists = async () => {
-  var _playlists = localStorage.getItem("playlists");
-  if (_playlists && _playlists.length > 0) {
+  var playlistHeaders = [];
+  const playlistHeaderStorage = localStorage.getItem("playlists");
+  if (playlistHeaderStorage && playlistHeaderStorage.length > 0) {
     console.debug("Found playlists in local storage");
-    const _playlistIds = JSON.parse(_playlists);
-    return _playlistIds.map((playlistId) =>
-      JSON.parseWithDate(localStorage.getItem(`playlist-${playlistId}`))
+    playlistHeaders = JSON.parse(playlistHeaderStorage);
+    //TODO Get new playlists
+  } else {
+    var offset = 0;
+    var more = true;
+
+    while (more) {
+      console.debug("Retrieving playlists");
+      const _playlistsResult = await spotifyApi.getUserPlaylists("akarl16", {
+        limit: 50,
+        offset: offset
+      });
+
+      playlistHeaders.push(..._playlistsResult.items);
+      more = _playlistsResult.next !== null;
+      offset = offset + _playlistsResult.items.length;
+    }
+
+    playlistHeaders = playlistHeaders.filter(
+      (playlist) => playlist.public && !ignorePlaylists.includes(playlist.name)
     );
-  }
-  _playlists = [];
-  var offset = 0;
-  var more = true;
 
-  while (more) {
-    console.debug("Retrieving playlists");
-    const _playlistsResult = await spotifyApi.getUserPlaylists("akarl16", {
-      limit: 50,
-      offset: offset
-    });
-
-    _playlists.push(..._playlistsResult.items);
-    more = _playlistsResult.next !== null;
-    offset = offset + _playlistsResult.items.length;
+    localStorage.setItem("playlists", JSON.stringify(playlistHeaders));
   }
 
-  _playlists = _playlists.filter(
-    (playlist) => playlist.public && !ignorePlaylists.includes(playlist.name)
-  );
-
-  _playlists = await Promise.all(
-    _playlists.map(async (playlist) => {
-      return {
-        id: playlist.id,
-        name: playlist.name,
-        trackList: await getAllTracks(playlist.id)
-      };
+  const playlists = await Promise.all(
+    playlistHeaders.map(async (playlistHeader) => {
+      var playlistStorage = localStorage.getItem(
+        `playlist-${playlistHeader.id}`
+      );
+      var playlist = null;
+      if (playlistStorage && playlistStorage.length > 0) {
+        playlist = JSON.parseWithDate(
+          localStorage.getItem(`playlist-${playlistHeader.id}`)
+        );
+      } else {
+        playlist = {
+          id: playlistHeader.id,
+          name: playlistHeader.name,
+          trackList: await getAllTracks(playlistHeader.id)
+        };
+      }
+      localStorage.setItem(`playlist-${playlist.id}`, JSON.stringify(playlist));
+      return playlist;
     })
   );
-  const _playlistIds = _playlists.map((playlist) => playlist.id);
-  localStorage.setItem("playlists", JSON.stringify(_playlistIds));
-  for (const playlist of _playlists) {
-    localStorage.setItem(`playlist-${playlist.id}`, JSON.stringify(playlist));
-  }
 
-  return _playlists;
+  return playlists;
 };
 
 function App() {
   const clientId = "c4145d13614447e9b3bcd287499086f4";
-  const redirectUri = window.location;
+  const redirectUri = "https://h86650.csb.app/";
   const scopes = ["playlist-read-collaborative", "user-modify-playback-state"];
   const loginUrl = encodeURI(
     `https://accounts.spotify.com/authorize?client_id=${clientId}&redirect_uri=${redirectUri}&scope=${scopes.join(
@@ -211,18 +230,36 @@ function App() {
             {params.value}
           </Fragment>
         );
-      }
+      },
+      getApplyQuickFilterFn: undefined
     },
     {
       field: "artists",
       headerName: "Artist(s)",
-      flex: 0.5
+      flex: 0.5,
+      getApplyQuickFilterFn: undefined
     },
     {
       field: "duration_ms",
       headerName: "Duration",
       flex: 0.2,
-      valueGetter: (params) => millisToMinutesAndSeconds(params.value)
+      valueGetter: (params) => millisToMinutesAndSeconds(params.value),
+      getApplyQuickFilterFn: (filterValue) => {
+        const filterMillis = /\d+:\d{2}/.test(filterValue)
+          ? durationToMillis(filterValue)
+          : null;
+        console.debug("filterValue", filterValue, filterMillis);
+        return (params) => {
+          if (filterMillis) {
+            const rowMillis = params.row["duration_ms"];
+            return (
+              rowMillis >= filterMillis - 1000 * 5 &&
+              rowMillis <= filterMillis + 1000 * 5
+            );
+          }
+          return params.value.startsWith(filterValue);
+        };
+      }
     },
     {
       field: "plays",
@@ -244,7 +281,8 @@ function App() {
             </Tooltip>
           </Fragment>
         );
-      }
+      },
+      getApplyQuickFilterFn: undefined
     },
     {
       field: "added_at",
@@ -254,23 +292,25 @@ function App() {
       valueFormatter: (params) =>
         `${
           params.value.getMonth() + 1
-        }/${params.value.getDate()}/${params.value.getFullYear()}`
+        }/${params.value.getDate()}/${params.value.getFullYear()}`,
+      getApplyQuickFilterFn: undefined
     },
     {
       field: "recencyScore",
       type: "number",
       headerName: "Recency",
-      flex: 0.1
+      flex: 0.1,
+      getApplyQuickFilterFn: undefined
     }
   ];
 
   const refreshData = async () => {
-    var _playlists = localStorage.getItem("playlists");
-    if (_playlists && _playlists.length > 0) {
+    var playlistStorage = localStorage.getItem("playlists");
+    if (playlistStorage && playlistStorage.length > 0) {
       console.debug("Removing playlists in local storage");
-      const _playlistIds = JSON.parse(_playlists);
-      for (const playlistId of _playlistIds) {
-        localStorage.removeItem(`playlist-${playlistId}`);
+      const playlists = JSON.parse(playlistStorage);
+      for (const playlist of playlists) {
+        localStorage.removeItem(`playlist-${playlist.id}`);
       }
       localStorage.removeItem("playlists");
     }
@@ -301,6 +341,14 @@ function App() {
     setTrackLibrary(_aggregatedPlaylist.trackList);
   };
 
+  const CustomToolbar = () => {
+    return (
+      <GridToolbarContainer>
+        <GridToolbarQuickFilter placeholder="Duration" />
+      </GridToolbarContainer>
+    );
+  };
+
   const Tracks = (props) => {
     if (!props.tracks) {
       return <div />;
@@ -314,6 +362,8 @@ function App() {
             columns={columns}
             autoHeight
             stickyHeader
+            density="compact"
+            components={{ Toolbar: CustomToolbar }}
           />
         </div>
       </div>
