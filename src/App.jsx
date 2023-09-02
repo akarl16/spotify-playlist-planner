@@ -1,23 +1,18 @@
 import "./styles.css";
 import "spotify-web-api-js";
 import SpotifyWebApi from "spotify-web-api-js";
-import React, { useState, useEffect, Fragment } from "react";
-import Backdrop from "@mui/material/Backdrop";
-import CircularProgress from "@mui/material/CircularProgress";
-import {
-  DataGrid,
-  GridToolbarContainer,
-  GridToolbarQuickFilter
-} from "@mui/x-data-grid";
+import React, { useState, useEffect, useMemo, Fragment } from "react";
+import MaterialReactTable from "material-react-table";
+import PlayCircleFilledIcon from '@mui/icons-material/PlayCircleFilled';
 import AppBar from "@mui/material/AppBar";
-import Toolbar from "@mui/material/Toolbar";
+import Backdrop from "@mui/material/Backdrop";
+import Badge from "@mui/material/Badge";
+import Box from "@mui/material/Box";
+import CircularProgress from "@mui/material/CircularProgress";
 import IconButton from "@mui/material/IconButton";
-import RefreshIcon from "@mui/icons-material/Refresh";
-import PlayCircleFilledIcon from "@mui/icons-material/PlayCircleFilled";
-import { Badge, Tooltip, Typography } from "@mui/material";
+import Tooltip from "@mui/material/Tooltip";
 import "json.date-extensions";
 
-const ignorePlaylists = ["Mellow cycle", "FTP Test", "Holiday cycle"];
 const spotifyApi = new SpotifyWebApi();
 
 const getTokenFromUrl = () => {
@@ -66,48 +61,61 @@ const setToken = (value, ttl) => {
   localStorage.setItem("token", JSON.stringify(tokenObject));
 };
 
-const findAggregatedPlaylist = (_playlists) => {
-  const ag = _playlists.find(
-    (playlist) => playlist.name === "Aggregated Cycle"
-  );
-  return ag;
-};
-
-const calculateStats = async (trackLibrary, playlists) => {
+const buildTrackLibrary = (libraryPlaylists, classPlaylists) => {
   const today = new Date().getTime();
   const todayMinus7 = today - 7 * 1000 * 60 * 60 * 24;
   const todayMinus30 = today - 30 * 1000 * 60 * 60 * 24;
   const todayMinus90 = today - 90 * 1000 * 60 * 60 * 24;
-  for (const libraryTrack of trackLibrary) {
-    libraryTrack.recencyScore = 0;
-    libraryTrack.plays = [];
-    for (const playlist of playlists) {
-      const playlistTracks = playlist.trackList.filter(
-        (playlistTrack) => playlistTrack.id === libraryTrack.id
+  const todayMinus180 = today - 180 * 1000 * 60 * 60 * 24;
+  const trackMap = new Map();
+  for (const libraryPlaylist of libraryPlaylists) {
+    for (const libraryTrack of libraryPlaylist.trackList) {
+      var track = libraryTrack;
+      if (trackMap.has(libraryTrack.id)) {
+        track = trackMap.get(libraryTrack.id);
+        track.lists += "," + libraryPlaylist.name;
+      } else {
+        track.recencyScore = 0;
+        track.plays = [];
+        track.lists = libraryPlaylist.name;
+        trackMap.set(track.id, track);
+      }
+    }
+  }
+
+  const trackList = Array.from(trackMap.values());
+  for (const track of trackList) {
+    for (const classPlaylist of classPlaylists) {
+      const playlistTracks = classPlaylist.trackList.filter(
+        (playlistTrack) => playlistTrack.id === track.id
       );
       for (const playlistTrack of playlistTracks) {
-        libraryTrack.plays.push(playlistTrack);
+        track.plays.push(playlistTrack);
         const playDate = playlistTrack.added_at.getTime();
         if (playDate > todayMinus7) {
-          libraryTrack.recencyScore += 10;
+          track.recencyScore += 10;
           playlistTrack.recencyScore = 10;
         } else if (playDate > todayMinus30) {
-          libraryTrack.recencyScore += 5;
+          track.recencyScore += 5;
           playlistTrack.recencyScore = 5;
         } else if (playDate > todayMinus90) {
-          libraryTrack.recencyScore += 2;
+          track.recencyScore += 2;
           playlistTrack.recencyScore = 2;
-        } else {
-          libraryTrack.recencyScore += 1;
+        } else if (playDate > todayMinus180) {
+          track.recencyScore += 1;
           playlistTrack.recencyScore = 1;
+        } else {
+          track.recencyScore += 0;
+          playlistTrack.recencyScore = 0;
         }
       }
     }
   }
-  trackLibrary.sort(
+
+  trackList.sort(
     (a, b) => a.recencyScore - b.recencyScore || b.added_at - a.added_at
   );
-  // trackLibrary.sort((a, b) => b.added_at - a.added_at);
+  return trackList;
 };
 
 const millisToMinutesAndSeconds = (millis) => {
@@ -149,7 +157,7 @@ const getAllTracks = async (_playlistId) => {
   });
 };
 
-const getPlaylists = async () => {
+const getPlaylistHeaders = async () => {
   var playlistHeaders = [];
   const playlistHeaderStorage = localStorage.getItem("playlists");
   if (playlistHeaderStorage && playlistHeaderStorage.length > 0) {
@@ -162,7 +170,7 @@ const getPlaylists = async () => {
 
     while (more) {
       console.debug("Retrieving playlists");
-      const _playlistsResult = await spotifyApi.getUserPlaylists("akarl16", {
+      const _playlistsResult = await spotifyApi.getUserPlaylists({
         limit: 50,
         offset: offset
       });
@@ -172,15 +180,15 @@ const getPlaylists = async () => {
       offset = offset + _playlistsResult.items.length;
     }
 
-    playlistHeaders = playlistHeaders.filter(
-      (playlist) => playlist.public && !ignorePlaylists.includes(playlist.name)
-    );
-
     localStorage.setItem("playlists", JSON.stringify(playlistHeaders));
   }
 
+  return playlistHeaders;
+};
+
+const getPlaylists = async (_playlistHeaders) => {
   const playlists = await Promise.all(
-    playlistHeaders.map(async (playlistHeader) => {
+    _playlistHeaders.map(async (playlistHeader) => {
       var playlistStorage = localStorage.getItem(
         `playlist-${playlistHeader.id}`
       );
@@ -193,6 +201,7 @@ const getPlaylists = async () => {
         playlist = {
           id: playlistHeader.id,
           name: playlistHeader.name,
+          description: playlistHeader.description,
           trackList: await getAllTracks(playlistHeader.id)
         };
       }
@@ -200,76 +209,81 @@ const getPlaylists = async () => {
       return playlist;
     })
   );
-
   return playlists;
 };
 
 function App() {
   const clientId = "c4145d13614447e9b3bcd287499086f4";
-  const redirectUri = "https://h86650.csb.app/";
-  const scopes = ["playlist-read-collaborative", "user-modify-playback-state"];
+  const redirectUri = window.location.href;
+  const scopes = [
+    "playlist-read-collaborative",
+    "user-modify-playback-state",
+    "playlist-read-private"
+  ];
   const loginUrl = encodeURI(
     `https://accounts.spotify.com/authorize?client_id=${clientId}&redirect_uri=${redirectUri}&scope=${scopes.join(
       " "
-    )}&response_type=token&show_dialog=true`
+    )}&response_type=token&show_dialog=false`
   );
   const [trackLibrary, setTrackLibrary] = useState();
+  const [libraryPlaylists, setLibraryPlaylists] = useState([]);
+
   const apiToken = getToken();
 
-  const columns = [
-    {
-      field: "name",
-      headerName: "Track Name",
-      flex: 1,
-      renderCell: (params) => {
-        return (
+  const matColumns = useMemo(
+    () => [
+      {
+        id: "blah",
+        header: "Actions",
+        size: 40,
+        Cell: ({ renderedCellValue, row }) => (
           <Fragment>
-            <IconButton onClick={async () => await playTrack(params.row.id)}>
+            <IconButton onClick={async () => await playTrack(row.original.id)}>
               <PlayCircleFilledIcon />
             </IconButton>
-            {params.value}
+            {/* <IconButton onClick={async () => await addTrack(row.original.id)}>
+              <PlaylistAddIcon />
+            </IconButton> */}
           </Fragment>
-        );
+        )
       },
-      getApplyQuickFilterFn: undefined
-    },
-    {
-      field: "artists",
-      headerName: "Artist(s)",
-      flex: 0.5,
-      getApplyQuickFilterFn: undefined
-    },
-    {
-      field: "duration_ms",
-      headerName: "Duration",
-      flex: 0.2,
-      valueGetter: (params) => millisToMinutesAndSeconds(params.value),
-      getApplyQuickFilterFn: (filterValue) => {
-        const filterMillis = /\d+:\d{2}/.test(filterValue)
-          ? durationToMillis(filterValue)
-          : null;
-        console.debug("filterValue", filterValue, filterMillis);
-        return (params) => {
+      {
+        accessorKey: "name",
+        header: "Track Name",
+        size: 100,
+        enableClickToCopy: true
+      },
+      {
+        accessorKey: "artists",
+        header: "Artist(s)",
+        size: 100
+      },
+      {
+        accessorFn: (row) => millisToMinutesAndSeconds(row.duration_ms),
+        header: "Duration",
+        size: 40,
+        filterFn: (row, id, filterValue) => {
+          const filterMillis = /\d+:\d{2}/.test(filterValue)
+            ? durationToMillis(filterValue)
+            : null;
           if (filterMillis) {
-            const rowMillis = params.row["duration_ms"];
+            const rowMillis = row.original.duration_ms;
             return (
               rowMillis >= filterMillis - 1000 * 5 &&
               rowMillis <= filterMillis + 1000 * 5
             );
           }
-          return params.value.startsWith(filterValue);
-        };
-      }
-    },
-    {
-      field: "plays",
-      headerName: "Plays",
-      flex: 0.1,
-      renderCell: (params) => {
-        return (
+          return true;
+        }
+      },
+      {
+        accessorKey: "plays",
+        header: "Plays",
+        size: 40,
+        Cell: ({ renderedCellValue, row }) => (
           <Fragment>
             <Tooltip
-              title={params.value
+              title={row.original.plays
                 .map((play) => {
                   return `${play.added_at.toLocaleDateString()} (${
                     play.recencyScore
@@ -277,32 +291,38 @@ function App() {
                 })
                 .join(", ")}
             >
-              <Badge badgeContent={params.value.length} color="primary"></Badge>
+              <Badge
+                badgeContent={row.original.plays.length}
+                color="primary"
+              ></Badge>
             </Tooltip>
           </Fragment>
-        );
+        )
       },
-      getApplyQuickFilterFn: undefined
-    },
-    {
-      field: "added_at",
-      type: "dateTime",
-      headerName: "Added On",
-      flex: 0.2,
-      valueFormatter: (params) =>
-        `${
-          params.value.getMonth() + 1
-        }/${params.value.getDate()}/${params.value.getFullYear()}`,
-      getApplyQuickFilterFn: undefined
-    },
-    {
-      field: "recencyScore",
-      type: "number",
-      headerName: "Recency",
-      flex: 0.1,
-      getApplyQuickFilterFn: undefined
-    }
-  ];
+      {
+        accessorFn: (row) => row.added_at,
+        Cell: ({ cell }) => cell.getValue()?.toLocaleDateString(),
+        header: "Added On",
+        sortingFn: "datetime",
+        size: 40
+      },
+      {
+        accessorKey: "recencyScore",
+        header: "Recency",
+        size: 40
+      },
+      {
+        accessorKey: "lists",
+        header: "Lists",
+        filterVariant: "select",
+        filterFn: "contains",
+        filterSelectOptions: Array.from(
+          libraryPlaylists?.map((libraryPlaylist) => libraryPlaylist.name)
+        )
+      }
+    ],
+    [libraryPlaylists]
+  );
 
   const refreshData = async () => {
     var playlistStorage = localStorage.getItem("playlists");
@@ -316,6 +336,8 @@ function App() {
     }
     setTrackLibrary(null);
     await getData();
+
+    //TODO Token refresh handler
   };
 
   const playTrack = async (trackId) => {
@@ -323,47 +345,75 @@ function App() {
     await spotifyApi.play({
       uris: [`spotify:track:${trackId}`]
     });
+
+    //TODO Token refresh handler
     // await spotifyApi.pause();
   };
 
+  // const addTrack = async (trackId) => {
+  //   console.debug(`ADDING TRACK TO PLAYLIST ${trackId}`);
+  // };
+
   const getData = async () => {
-    const _playlists = await getPlaylists();
-    console.debug("GOT PLAYLISTS");
-    console.debug(_playlists);
+    const _dateRegex = /([12]\d{3}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01]))/;
+    const _libraryRegex = /\[LIBRARY\]/;
 
-    const _aggregatedPlaylist = findAggregatedPlaylist(_playlists);
-
-    const _classPlaylists = _playlists.filter(
-      (playlist) => playlist.id !== _aggregatedPlaylist.id
+    const _playlistHeaders = await getPlaylistHeaders();
+    _playlistHeaders.sort((a, b) => a.name - b.name);
+    for (const cpl of _playlistHeaders) {
+      cpl.isClassPlaylist = _dateRegex.test(cpl.name);
+    }
+    console.debug("GOT PLAYLIST HEADERS");
+    console.debug(
+      _playlistHeaders.map((pl) => {
+        return { name: pl.name, isClassPlaylist: pl.isClassPlaylist };
+      })
     );
+    // console.debug(_playlistHeaders);
 
-    await calculateStats(_aggregatedPlaylist.trackList, _classPlaylists);
-    setTrackLibrary(_aggregatedPlaylist.trackList);
-  };
-
-  const CustomToolbar = () => {
-    return (
-      <GridToolbarContainer>
-        <GridToolbarQuickFilter placeholder="Duration" />
-      </GridToolbarContainer>
+    const _libraryPlaylistHeaders = _playlistHeaders.filter(
+      (playlist) =>
+        _libraryRegex.test(playlist.name) ||
+        _libraryRegex.test(playlist.description)
     );
+    console.debug("Library playlists");
+    console.debug(_libraryPlaylistHeaders);
+
+    const _classPlaylistHeaders = _playlistHeaders.filter((playlist) =>
+      _dateRegex.test(playlist.name)
+    );
+    _classPlaylistHeaders.sort((a, b) => a.name - b.name);
+
+    console.debug("Class playlists");
+    console.debug(_classPlaylistHeaders);
+
+    const _libraryPlaylists = await getPlaylists(_libraryPlaylistHeaders);
+    const _classPlaylists = await getPlaylists(_classPlaylistHeaders);
+
+    const _trackLibrary = buildTrackLibrary(_libraryPlaylists, _classPlaylists);
+
+    console.debug("Track library");
+    console.debug(_trackLibrary);
+
+    setLibraryPlaylists(_libraryPlaylists);
+    setTrackLibrary(_trackLibrary);
   };
 
   const Tracks = (props) => {
     if (!props.tracks) {
       return <div />;
     }
-
     return (
       <div style={{ display: "flex", height: "100%" }}>
         <div style={{ flexGrow: 1 }}>
-          <DataGrid
-            rows={props.tracks}
-            columns={columns}
-            autoHeight
-            stickyHeader
-            density="compact"
-            components={{ Toolbar: CustomToolbar }}
+          <MaterialReactTable
+            columns={matColumns}
+            data={props.tracks}
+            initialState={{
+              pagination: { pageSize: 100 },
+              density: "compact",
+              showColumnFilters: true
+            }}
           />
         </div>
       </div>
@@ -380,14 +430,21 @@ function App() {
     }
   }, [apiToken]);
 
+  const drawerWidth = 240;
+
   console.debug("Render");
   console.debug(trackLibrary);
   return (
     <div className="App" style={{ height: "100%" }}>
       {apiToken ? (
-        <Fragment>
-          <AppBar position="static" color="inherit">
-            <Toolbar>
+        <Box sx={{ display: "flex", marginTop: 10 }}>
+          {/* <CssBaseline /> */}
+          <AppBar
+            position="fixed"
+            color="inherit"
+            sx={{ zIndex: (theme) => theme.zIndex.drawer + 1 }}
+          >
+            {/* <Toolbar>
               <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
                 Playlist Planner
               </Typography>
@@ -399,16 +456,18 @@ function App() {
               >
                 <RefreshIcon />
               </IconButton>
-            </Toolbar>
+            </Toolbar> */}
           </AppBar>
           {trackLibrary ? (
-            <Tracks tracks={trackLibrary} />
+            <Box component="main" sx={{ flexGrow: 1 }}>
+              <Tracks tracks={trackLibrary} />
+            </Box>
           ) : (
             <Backdrop open={true} sx={{ color: "#fff" }}>
               <CircularProgress color="inherit" />
             </Backdrop>
           )}
-        </Fragment>
+        </Box>
       ) : (
         <a href={loginUrl}>Get Token</a>
       )}
