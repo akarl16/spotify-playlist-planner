@@ -1,9 +1,14 @@
 import "./styles.css";
-// import "spotify-web-api-js";
 import React, { useState, useEffect, useMemo, Fragment } from "react";
 import MaterialReactTable from "material-react-table";
+
 import PlayCircleFilledIcon from '@mui/icons-material/PlayCircleFilled';
+import RefreshIcon from '@mui/icons-material/Refresh';
+import MenuIcon from '@mui/icons-material/Menu';
+
 import AppBar from "@mui/material/AppBar";
+import Toolbar from '@mui/material/Toolbar';
+import Typography from '@mui/material/Typography';
 import Backdrop from "@mui/material/Backdrop";
 import Badge from "@mui/material/Badge";
 import Box from "@mui/material/Box";
@@ -11,6 +16,7 @@ import Button from "@mui/material/Button"
 import CircularProgress from "@mui/material/CircularProgress";
 import IconButton from "@mui/material/IconButton";
 import Tooltip from "@mui/material/Tooltip";
+
 import "json.date-extensions";
 import * as spotify from "./spotify.js";
 
@@ -173,8 +179,6 @@ function App() {
   const [isSpotifyAuthorized, setIsSpotifyAuthorized] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
-  // const access_token = spotify.getAccessToken();
-
   const matColumns = useMemo(
     () => [
       {
@@ -281,8 +285,6 @@ function App() {
     }
     setTrackLibrary(null);
     await getData();
-
-    //TODO Token refresh handler
   };
 
   const playTrack = async (trackId) => {
@@ -291,9 +293,6 @@ function App() {
     await spotifyApi.play({
       uris: [`spotify:track:${trackId}`]
     });
-
-    //TODO Token refresh handler
-    // await spotifyApi.pause();
   };
 
   // const addTrack = async (trackId) => {
@@ -301,6 +300,7 @@ function App() {
   // };
 
   const getData = async () => {
+    setIsLoading(true);
     const _dateRegex = /([12]\d{3}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01]))/;
     const _libraryRegex = /\[LIBRARY\]/;
 
@@ -343,6 +343,7 @@ function App() {
 
     setLibraryPlaylists(_libraryPlaylists);
     setTrackLibrary(_trackLibrary);
+    setIsLoading(false);
   };
 
   const Tracks = (props) => {
@@ -397,10 +398,13 @@ function App() {
           {/* <CssBaseline /> */}
           <AppBar
             position="fixed"
-            color="inherit"
+            color="primary"
             sx={{ zIndex: (theme) => theme.zIndex.drawer + 1 }}
           >
-            {/* <Toolbar>
+            <Toolbar>
+              <IconButton color="inherit" aria-label="menu">
+                <MenuIcon />
+              </IconButton>
               <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
                 Playlist Planner
               </Typography>
@@ -412,7 +416,7 @@ function App() {
               >
                 <RefreshIcon />
               </IconButton>
-            </Toolbar> */}
+            </Toolbar>
           </AppBar>
           {/* {trackLibrary ? (
             <Box component="main" sx={{ flexGrow: 1 }}>
