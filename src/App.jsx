@@ -1,6 +1,5 @@
 import "./styles.css";
-import "spotify-web-api-js";
-import SpotifyWebApi from "spotify-web-api-js";
+// import "spotify-web-api-js";
 import React, { useState, useEffect, useMemo, Fragment } from "react";
 import MaterialReactTable from "material-react-table";
 import PlayCircleFilledIcon from '@mui/icons-material/PlayCircleFilled';
@@ -8,58 +7,12 @@ import AppBar from "@mui/material/AppBar";
 import Backdrop from "@mui/material/Backdrop";
 import Badge from "@mui/material/Badge";
 import Box from "@mui/material/Box";
+import Button from "@mui/material/Button"
 import CircularProgress from "@mui/material/CircularProgress";
 import IconButton from "@mui/material/IconButton";
 import Tooltip from "@mui/material/Tooltip";
 import "json.date-extensions";
-
-const spotifyApi = new SpotifyWebApi();
-
-const getTokenFromUrl = () => {
-  return window.location.hash
-    .substring(1)
-    .split("&")
-    .reduce((initial, item) => {
-      var parts = item.split("=");
-      initial[parts[0]] = decodeURIComponent(parts[1]);
-      return initial;
-    }, {});
-};
-
-const getToken = () => {
-  const hash = getTokenFromUrl();
-  if (hash.access_token) {
-    console.debug("Token found in URL");
-    setToken(hash.access_token, hash.expires_in * 1000);
-    return hash.access_token;
-  }
-  const tokenString = localStorage.getItem("token");
-  if (!tokenString) {
-    console.debug("No token found in local storage");
-    return tokenString;
-  } else {
-    console.debug("Token found in storage");
-  }
-  const tokenObject = JSON.parse(tokenString);
-  const now = new Date();
-  if (now.getTime() > tokenObject.expiration) {
-    console.debug("Token expired in local storage");
-    localStorage.removeItem("token");
-    return undefined;
-  } else {
-    console.debug("Token not expired in storage");
-  }
-  return tokenObject.value;
-};
-
-const setToken = (value, ttl) => {
-  const now = new Date();
-  const tokenObject = {
-    expiration: now.getTime() + ttl,
-    value: value
-  };
-  localStorage.setItem("token", JSON.stringify(tokenObject));
-};
+import * as spotify from "./spotify.js";
 
 const buildTrackLibrary = (libraryPlaylists, classPlaylists) => {
   const today = new Date().getTime();
@@ -137,6 +90,7 @@ const getAllTracks = async (_playlistId) => {
   var more = true;
   var offset = 0;
 
+  const spotifyApi = await spotify.getSpotifyApi();
   while (more) {
     const tracksResult = await spotifyApi.getPlaylistTracks(_playlistId, {
       limit: 50,
@@ -170,6 +124,7 @@ const getPlaylistHeaders = async () => {
 
     while (more) {
       console.debug("Retrieving playlists");
+      const spotifyApi = await spotify.getSpotifyApi();
       const _playlistsResult = await spotifyApi.getUserPlaylists({
         limit: 50,
         offset: offset
@@ -213,22 +168,12 @@ const getPlaylists = async (_playlistHeaders) => {
 };
 
 function App() {
-  const clientId = "c4145d13614447e9b3bcd287499086f4";
-  const redirectUri = window.location.href;
-  const scopes = [
-    "playlist-read-collaborative",
-    "user-modify-playback-state",
-    "playlist-read-private"
-  ];
-  const loginUrl = encodeURI(
-    `https://accounts.spotify.com/authorize?client_id=${clientId}&redirect_uri=${redirectUri}&scope=${scopes.join(
-      " "
-    )}&response_type=token&show_dialog=false`
-  );
-  const [trackLibrary, setTrackLibrary] = useState();
+  const [trackLibrary, setTrackLibrary] = useState([]);
   const [libraryPlaylists, setLibraryPlaylists] = useState([]);
+  const [isSpotifyAuthorized, setIsSpotifyAuthorized] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
 
-  const apiToken = getToken();
+  // const access_token = spotify.getAccessToken();
 
   const matColumns = useMemo(
     () => [
@@ -342,6 +287,7 @@ function App() {
 
   const playTrack = async (trackId) => {
     console.debug(`PLAYING TRACK ${trackId}`);
+    const spotifyApi = await spotify.getSpotifyApi();
     await spotifyApi.play({
       uris: [`spotify:track:${trackId}`]
     });
@@ -421,22 +367,32 @@ function App() {
   };
 
   useEffect(() => {
-    window.location.hash = "";
-    if (apiToken) {
-      console.debug("Token");
-      console.debug(apiToken);
-      spotifyApi.setAccessToken(apiToken);
-      getData();
+    async function checkAuth() {
+      setIsSpotifyAuthorized(await spotify.isAuthorized());
     }
-  }, [apiToken]);
+    
+    checkAuth()
+      .catch(console.error);;
+    setIsLoading(false);
+  }, []);
+
+  useEffect(() => {
+    async function fetchData() {
+      await getData();
+    }
+    fetchData();
+  }, [isSpotifyAuthorized])
 
   const drawerWidth = 240;
 
-  console.debug("Render");
-  console.debug(trackLibrary);
   return (
     <div className="App" style={{ height: "100%" }}>
-      {apiToken ? (
+      { isLoading ? (
+        <Backdrop open={true} sx={{ color: "#fff" }}>
+          <CircularProgress color="inherit" />
+        </Backdrop>
+        )
+        : isSpotifyAuthorized ? (
         <Box sx={{ display: "flex", marginTop: 10 }}>
           {/* <CssBaseline /> */}
           <AppBar
@@ -458,7 +414,7 @@ function App() {
               </IconButton>
             </Toolbar> */}
           </AppBar>
-          {trackLibrary ? (
+          {/* {trackLibrary ? (
             <Box component="main" sx={{ flexGrow: 1 }}>
               <Tracks tracks={trackLibrary} />
             </Box>
@@ -466,10 +422,14 @@ function App() {
             <Backdrop open={true} sx={{ color: "#fff" }}>
               <CircularProgress color="inherit" />
             </Backdrop>
-          )}
+          )} */}
+          <Box component="main" sx={{ flexGrow: 1 }}>
+            { console.debug("Render: Track Library", trackLibrary) }
+            <Tracks tracks={trackLibrary} />
+          </Box>
         </Box>
       ) : (
-        <a href={loginUrl}>Get Token</a>
+        <Button variant="contained" color="primary" onClick={ spotify.authorizeSpotify }>Authorize Spotify access</Button>
       )}
     </div>
   );
