@@ -128,7 +128,7 @@ function authorizeSpotify() {
 
     generateCodeChallenge(codeVerifier).then(codeChallenge => {
         let state = generateRandomString(16);
-        let scope = "playlist-read-collaborative user-modify-playback-state playlist-read-private";
+        let scope = "playlist-read-collaborative user-modify-playback-state playlist-read-private playlist-modify-public playlist-modify-private";
         localStorage.setItem('code_verifier', codeVerifier);
         let redirect_url = window.location.href.replace(/\?$/,'');
 

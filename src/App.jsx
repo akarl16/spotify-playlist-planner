@@ -5,6 +5,8 @@ import MaterialReactTable from "material-react-table";
 import PlayCircleFilledIcon from '@mui/icons-material/PlayCircleFilled';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import MenuIcon from '@mui/icons-material/Menu';
+import PlaylistAddIcon from '@mui/icons-material/PlaylistAdd';
+import VpnKeyIcon from '@mui/icons-material/VpnKey';
 
 import AppBar from "@mui/material/AppBar";
 import Toolbar from '@mui/material/Toolbar';
@@ -16,6 +18,8 @@ import Button from "@mui/material/Button"
 import CircularProgress from "@mui/material/CircularProgress";
 import IconButton from "@mui/material/IconButton";
 import Tooltip from "@mui/material/Tooltip";
+import Autocomplete from '@mui/material/Autocomplete';
+import TextField from '@mui/material/TextField';
 
 import "json.date-extensions";
 import * as spotify from "./spotify.js";
@@ -176,8 +180,10 @@ const getPlaylists = async (_playlistHeaders) => {
 function App() {
   const [trackLibrary, setTrackLibrary] = useState([]);
   const [libraryPlaylists, setLibraryPlaylists] = useState([]);
+  const [classPlaylists, setClassPlaylists] = useState([]);
   const [isSpotifyAuthorized, setIsSpotifyAuthorized] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [playlistToPlan, setPlaylistToPlan] = useState();
 
   const matColumns = useMemo(
     () => [
@@ -190,9 +196,9 @@ function App() {
             <IconButton onClick={async () => await playTrack(row.original.id)}>
               <PlayCircleFilledIcon />
             </IconButton>
-            {/* <IconButton onClick={async () => await addTrack(row.original.id)}>
+            <IconButton onClick={async () => await addTrack(row.original.id)}>
               <PlaylistAddIcon />
-            </IconButton> */}
+            </IconButton>
           </Fragment>
         )
       },
@@ -234,9 +240,8 @@ function App() {
             <Tooltip
               title={row.original.plays
                 .map((play) => {
-                  return `${play.added_at.toLocaleDateString()} (${
-                    play.recencyScore
-                  })`;
+                  return `${play.added_at.toLocaleDateString()} (${play.recencyScore
+                    })`;
                 })
                 .join(", ")}
             >
@@ -287,6 +292,10 @@ function App() {
     await getData();
   };
 
+  const refreshAuthorization = async () => {
+    spotify.authorizeSpotify();
+  }
+
   const playTrack = async (trackId) => {
     console.debug(`PLAYING TRACK ${trackId}`);
     const spotifyApi = await spotify.getSpotifyApi();
@@ -295,9 +304,14 @@ function App() {
     });
   };
 
-  // const addTrack = async (trackId) => {
-  //   console.debug(`ADDING TRACK TO PLAYLIST ${trackId}`);
-  // };
+  const addTrack = async (trackId) => {
+    console.debug(`ADDING TRACK TO PLAYLIST ${trackId}`);
+    const spotifyApi = await spotify.getSpotifyApi();
+    await spotifyApi.addTracksToPlaylist(playlistToPlan.id,[`spotify:track:${trackId}`]);
+    const track = trackLibrary.find((track) => track.id === trackId);
+    const duration_string = "0:" + millisToMinutesAndSeconds(track.duration_ms);
+    navigator.clipboard.writeText(`${track.name}\t${duration_string}`);
+  };
 
   const getData = async () => {
     setIsLoading(true);
@@ -335,12 +349,14 @@ function App() {
 
     const _libraryPlaylists = await getPlaylists(_libraryPlaylistHeaders);
     const _classPlaylists = await getPlaylists(_classPlaylistHeaders);
+    _classPlaylists.sort((a, b) => a.name - b.name);
 
     const _trackLibrary = buildTrackLibrary(_libraryPlaylists, _classPlaylists);
 
     console.debug("Track library");
     console.debug(_trackLibrary);
 
+    setClassPlaylists(_classPlaylists);
     setLibraryPlaylists(_libraryPlaylists);
     setTrackLibrary(_trackLibrary);
     setIsLoading(false);
@@ -371,7 +387,7 @@ function App() {
     async function checkAuth() {
       setIsSpotifyAuthorized(await spotify.isAuthorized());
     }
-    
+
     checkAuth()
       .catch(console.error);;
     setIsLoading(false);
@@ -384,57 +400,73 @@ function App() {
     fetchData();
   }, [isSpotifyAuthorized])
 
-  const drawerWidth = 240;
-
   return (
     <div className="App" style={{ height: "100%" }}>
-      { isLoading ? (
+      {isLoading ? (
         <Backdrop open={true} sx={{ color: "#fff" }}>
           <CircularProgress color="inherit" />
         </Backdrop>
-        )
+      )
         : isSpotifyAuthorized ? (
-        <Box sx={{ display: "flex", marginTop: 10 }}>
-          {/* <CssBaseline /> */}
-          <AppBar
-            position="fixed"
-            color="primary"
-            sx={{ zIndex: (theme) => theme.zIndex.drawer + 1 }}
-          >
-            <Toolbar>
-              <IconButton color="inherit" aria-label="menu">
-                <MenuIcon />
-              </IconButton>
-              <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
-                Playlist Planner
-              </Typography>
-              <IconButton
-                size="large"
-                color="inherit"
-                aria-label="Refresh"
-                onClick={async () => await refreshData()}
-              >
-                <RefreshIcon />
-              </IconButton>
-            </Toolbar>
-          </AppBar>
-          {/* {trackLibrary ? (
+          <Box sx={{ display: "flex", marginTop: 10 }}>
+            {/* <CssBaseline /> */}
+            <AppBar
+              position="fixed"
+              color="primary"
+              sx={{ zIndex: (theme) => theme.zIndex.drawer + 1 }}
+            >
+              <Toolbar>
+                <IconButton color="inherit" aria-label="menu">
+                  <MenuIcon />
+                </IconButton>
+                <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
+                  Playlist Planner
+                </Typography>
+                <IconButton
+                  size="large"
+                  color="inherit"
+                  aria-label="Authorize"
+                  onClick={async () => await refreshAuthorization()}
+                >
+                  <VpnKeyIcon />
+                </IconButton>
+                <IconButton
+                  size="large"
+                  color="inherit"
+                  aria-label="Refresh"
+                  onClick={async () => await refreshData()}
+                >
+                  <RefreshIcon />
+                </IconButton>
+              </Toolbar>
+            </AppBar>
             <Box component="main" sx={{ flexGrow: 1 }}>
+              <Autocomplete
+                id="planning-playlist-selector"
+                sx={{ width: 300 }}
+                options={classPlaylists}
+                autoHighlight
+                value={playlistToPlan}
+                // onChange={(_event,newValue) => setPlaylistToPlan(newValue)}
+                getOptionLabel={(option) => option.name}
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    label="Choose a playlist to plan"
+                    inputProps={{
+                      ...params.inputProps,
+                      autoComplete: 'new-password', // disable autocomplete and autofill
+                    }}
+                  />
+                )}
+              />
+              {console.debug("Render: Track Library", trackLibrary)}
               <Tracks tracks={trackLibrary} />
             </Box>
-          ) : (
-            <Backdrop open={true} sx={{ color: "#fff" }}>
-              <CircularProgress color="inherit" />
-            </Backdrop>
-          )} */}
-          <Box component="main" sx={{ flexGrow: 1 }}>
-            { console.debug("Render: Track Library", trackLibrary) }
-            <Tracks tracks={trackLibrary} />
           </Box>
-        </Box>
-      ) : (
-        <Button variant="contained" color="primary" onClick={ spotify.authorizeSpotify }>Authorize Spotify access</Button>
-      )}
+        ) : (
+          <Button variant="contained" color="primary" onClick={spotify.authorizeSpotify}>Authorize Spotify access</Button>
+        )}
     </div>
   );
 }
