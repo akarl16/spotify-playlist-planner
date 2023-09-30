@@ -23,159 +23,7 @@ import TextField from '@mui/material/TextField';
 
 import "json.date-extensions";
 import * as spotify from "./spotify.js";
-
-const buildTrackLibrary = (libraryPlaylists, classPlaylists) => {
-  const today = new Date().getTime();
-  const todayMinus7 = today - 7 * 1000 * 60 * 60 * 24;
-  const todayMinus30 = today - 30 * 1000 * 60 * 60 * 24;
-  const todayMinus90 = today - 90 * 1000 * 60 * 60 * 24;
-  const todayMinus180 = today - 180 * 1000 * 60 * 60 * 24;
-  const trackMap = new Map();
-  for (const libraryPlaylist of libraryPlaylists) {
-    for (const libraryTrack of libraryPlaylist.trackList) {
-      var track = libraryTrack;
-      if (trackMap.has(libraryTrack.id)) {
-        track = trackMap.get(libraryTrack.id);
-        track.lists += "," + libraryPlaylist.name;
-      } else {
-        track.recencyScore = 0;
-        track.plays = [];
-        track.lists = libraryPlaylist.name;
-        trackMap.set(track.id, track);
-      }
-    }
-  }
-
-  const trackList = Array.from(trackMap.values());
-  for (const track of trackList) {
-    for (const classPlaylist of classPlaylists) {
-      const playlistTracks = classPlaylist.trackList.filter(
-        (playlistTrack) => playlistTrack.id === track.id
-      );
-      for (const playlistTrack of playlistTracks) {
-        track.plays.push(playlistTrack);
-        const playDate = playlistTrack.added_at.getTime();
-        if (playDate > todayMinus7) {
-          track.recencyScore += 10;
-          playlistTrack.recencyScore = 10;
-        } else if (playDate > todayMinus30) {
-          track.recencyScore += 5;
-          playlistTrack.recencyScore = 5;
-        } else if (playDate > todayMinus90) {
-          track.recencyScore += 2;
-          playlistTrack.recencyScore = 2;
-        } else if (playDate > todayMinus180) {
-          track.recencyScore += 1;
-          playlistTrack.recencyScore = 1;
-        } else {
-          track.recencyScore += 0;
-          playlistTrack.recencyScore = 0;
-        }
-      }
-    }
-  }
-
-  trackList.sort(
-    (a, b) => a.recencyScore - b.recencyScore || b.added_at - a.added_at
-  );
-  return trackList;
-};
-
-const millisToMinutesAndSeconds = (millis) => {
-  var minutes = Math.floor(millis / 60000);
-  var seconds = ((millis % 60000) / 1000).toFixed(0);
-  return minutes + ":" + (seconds < 10 ? "0" : "") + seconds;
-};
-
-const durationToMillis = (duration) => {
-  const durationParts = duration.split(":");
-  const millis = durationParts[0] * 60000 + durationParts[1] * 1000;
-  console.debug("millis", millis);
-  return millis;
-};
-
-const getAllTracks = async (_playlistId) => {
-  console.debug("Retrieving tracks");
-  const tracks = [];
-  var more = true;
-  var offset = 0;
-
-  const spotifyApi = await spotify.getSpotifyApi();
-  while (more) {
-    const tracksResult = await spotifyApi.getPlaylistTracks(_playlistId, {
-      limit: 50,
-      offset: offset
-    });
-    tracks.push(...tracksResult.items);
-    more = tracksResult.next !== null;
-    offset = offset + tracksResult.items.length;
-  }
-  return tracks.map((track) => {
-    return {
-      id: track.track.id,
-      added_at: new Date(track.added_at),
-      name: track.track.name,
-      duration_ms: track.track.duration_ms,
-      artists: track.track.artists.map((artist) => artist.name)
-    };
-  });
-};
-
-const getPlaylistHeaders = async () => {
-  var playlistHeaders = [];
-  const playlistHeaderStorage = localStorage.getItem("playlists");
-  if (playlistHeaderStorage && playlistHeaderStorage.length > 0) {
-    console.debug("Found playlists in local storage");
-    playlistHeaders = JSON.parse(playlistHeaderStorage);
-    //TODO Get new playlists
-  } else {
-    var offset = 0;
-    var more = true;
-
-    while (more) {
-      console.debug("Retrieving playlists");
-      const spotifyApi = await spotify.getSpotifyApi();
-      const _playlistsResult = await spotifyApi.getUserPlaylists({
-        limit: 50,
-        offset: offset
-      });
-
-      playlistHeaders.push(..._playlistsResult.items);
-      more = _playlistsResult.next !== null;
-      offset = offset + _playlistsResult.items.length;
-    }
-
-    localStorage.setItem("playlists", JSON.stringify(playlistHeaders));
-  }
-
-  return playlistHeaders;
-};
-
-const getPlaylists = async (_playlistHeaders) => {
-  const playlists = await Promise.all(
-    _playlistHeaders.map(async (playlistHeader) => {
-      var playlistStorage = localStorage.getItem(
-        `playlist-${playlistHeader.id}`
-      );
-      var playlist = null;
-      if (playlistStorage && playlistStorage.length > 0) {
-        playlist = JSON.parseWithDate(
-          localStorage.getItem(`playlist-${playlistHeader.id}`)
-        );
-      } else {
-        playlist = {
-          id: playlistHeader.id,
-          name: playlistHeader.name,
-          description: playlistHeader.description,
-          trackList: await getAllTracks(playlistHeader.id)
-        };
-      }
-      localStorage.setItem(`playlist-${playlist.id}`, JSON.stringify(playlist));
-      return playlist;
-    })
-  );
-  return playlists;
-};
+import * as database from "./database.js";
 
 function App() {
   const [trackLibrary, setTrackLibrary] = useState([]);
@@ -278,16 +126,178 @@ function App() {
     [libraryPlaylists]
   );
 
-  const refreshData = async () => {
-    var playlistStorage = localStorage.getItem("playlists");
-    if (playlistStorage && playlistStorage.length > 0) {
-      console.debug("Removing playlists in local storage");
-      const playlists = JSON.parse(playlistStorage);
-      for (const playlist of playlists) {
-        localStorage.removeItem(`playlist-${playlist.id}`);
+  const buildTrackLibrary = (libraryPlaylists, classPlaylists) => {
+    const today = new Date().getTime();
+    const todayMinus7 = today - 7 * 1000 * 60 * 60 * 24;
+    const todayMinus30 = today - 30 * 1000 * 60 * 60 * 24;
+    const todayMinus90 = today - 90 * 1000 * 60 * 60 * 24;
+    const todayMinus180 = today - 180 * 1000 * 60 * 60 * 24;
+    const trackMap = new Map();
+    for (const libraryPlaylist of libraryPlaylists) {
+      for (const libraryTrack of libraryPlaylist.trackList) {
+        var track = libraryTrack;
+        if (trackMap.has(libraryTrack.id)) {
+          track = trackMap.get(libraryTrack.id);
+          track.lists += "," + libraryPlaylist.name;
+        } else {
+          track.recencyScore = 0;
+          track.plays = [];
+          track.lists = libraryPlaylist.name;
+          trackMap.set(track.id, track);
+        }
       }
-      localStorage.removeItem("playlists");
     }
+  
+    const trackList = Array.from(trackMap.values());
+    for (const track of trackList) {
+      for (const classPlaylist of classPlaylists) {
+        const playlistTracks = classPlaylist.trackList.filter(
+          (playlistTrack) => playlistTrack.id === track.id
+        );
+        for (const playlistTrack of playlistTracks) {
+          track.plays.push(playlistTrack);
+          const playDate = playlistTrack.added_at.getTime();
+          if (playDate > todayMinus7) {
+            track.recencyScore += 10;
+            playlistTrack.recencyScore = 10;
+          } else if (playDate > todayMinus30) {
+            track.recencyScore += 5;
+            playlistTrack.recencyScore = 5;
+          } else if (playDate > todayMinus90) {
+            track.recencyScore += 2;
+            playlistTrack.recencyScore = 2;
+          } else if (playDate > todayMinus180) {
+            track.recencyScore += 1;
+            playlistTrack.recencyScore = 1;
+          } else {
+            track.recencyScore += 0;
+            playlistTrack.recencyScore = 0;
+          }
+        }
+      }
+    }
+  
+    trackList.sort(
+      (a, b) => a.recencyScore - b.recencyScore || b.added_at - a.added_at
+    );
+    return trackList;
+  };
+  
+  const millisToMinutesAndSeconds = (millis) => {
+    var minutes = Math.floor(millis / 60000);
+    var seconds = ((millis % 60000) / 1000).toFixed(0);
+    return minutes + ":" + (seconds < 10 ? "0" : "") + seconds;
+  };
+  
+  const durationToMillis = (duration) => {
+    const durationParts = duration.split(":");
+    const millis = durationParts[0] * 60000 + durationParts[1] * 1000;
+    console.debug("millis", millis);
+    return millis;
+  };
+  
+  const getAllTracks = async (_playlistId) => {
+    console.debug("Retrieving tracks");
+    const tracks = [];
+    var more = true;
+    var offset = 0;
+  
+    const spotifyApi = await spotify.getSpotifyApi();
+    while (more) {
+      const tracksResult = await spotifyApi.getPlaylistTracks(_playlistId, {
+        limit: 50,
+        offset: offset
+      });
+      tracks.push(...tracksResult.items);
+      more = tracksResult.next !== null;
+      offset = offset + tracksResult.items.length;
+    }
+    return tracks.map((track) => {
+      return {
+        id: track.track.id,
+        added_at: new Date(track.added_at),
+        name: track.track.name,
+        duration_ms: track.track.duration_ms,
+        artists: track.track.artists.map((artist) => artist.name)
+      };
+    });
+  };
+  
+  const getPlaylistHeaders = async () => {
+    let playlistHeaders = [];
+
+    playlistHeaders = await database.getPlaylists();
+
+    if (playlistHeaders && playlistHeaders.length > 0) {
+      console.debug("Found playlists in local storage");
+    } else {
+      console.debug("No playlists in storage");
+      playlistHeaders = retrievePlaylistHeaders();
+      database.setPlaylists(playlistHeaders);
+    }
+  
+    return playlistHeaders;
+  };
+
+  async function retrievePlaylistHeaders() {
+    let playlistHeaders = [];
+    var offset = 0;
+    var more = true;
+
+    while (more) {
+      console.debug("Retrieving playlists");
+      const spotifyApi = await spotify.getSpotifyApi();
+      const _playlistsResult = await spotifyApi.getUserPlaylists({
+        limit: 50,
+        offset: offset
+      });
+
+      playlistHeaders.push(..._playlistsResult.items);
+      more = _playlistsResult.next !== null;
+      offset = offset + _playlistsResult.items.length;
+    }
+    return playlistHeaders;
+  }
+  
+  const getPlaylists = async (_playlistHeaders) => {
+    const playlists = await Promise.all(
+      _playlistHeaders.map(async (playlistHeader) => {
+        var playlistStorage = localStorage.getItem(
+          `playlist-${playlistHeader.id}`
+        );
+        var playlist = null;
+        if (playlistStorage && playlistStorage.length > 0) {
+          playlist = JSON.parseWithDate(
+            localStorage.getItem(`playlist-${playlistHeader.id}`)
+          );
+        } else {
+          playlist = {
+            id: playlistHeader.id,
+            name: playlistHeader.name,
+            description: playlistHeader.description,
+            trackList: await getAllTracks(playlistHeader.id)
+          };
+        }
+        localStorage.setItem(`playlist-${playlist.id}`, JSON.stringify(playlist));
+        return playlist;
+      })
+    );
+    return playlists;
+  };
+
+  const refreshData = async () => {
+
+    database.clearPlaylists();
+    database.setPlaylists(await retrievePlaylistHeaders());
+    // var playlistStorage = localStorage.getItem("playlists");
+    // if (playlistStorage && playlistStorage.length > 0) {
+    //   console.debug("Removing playlists in local storage");
+    //   const playlists = JSON.parse(playlistStorage);
+    //   for (const playlist of playlists) {
+    //     localStorage.removeItem(`playlist-${playlist.id}`);
+    //   }
+    //   localStorage.removeItem("playlists");
+    // }
     setTrackLibrary(null);
     await getData();
   };
@@ -385,19 +395,26 @@ function App() {
 
   useEffect(() => {
     async function checkAuth() {
+      console.log('init database');
+      await database.init();
+      console.log('checking authorization');
       setIsSpotifyAuthorized(await spotify.isAuthorized());
     }
 
     checkAuth()
       .catch(console.error);;
-    setIsLoading(false);
+    
   }, []);
 
   useEffect(() => {
     async function fetchData() {
+      console.log('fetching data');
       await getData();
+      setIsLoading(false);
     }
-    fetchData();
+    if(isSpotifyAuthorized) {
+      fetchData();
+    }
   }, [isSpotifyAuthorized])
 
   return (
@@ -446,8 +463,11 @@ function App() {
                 sx={{ width: 300 }}
                 options={classPlaylists}
                 autoHighlight
-                value={playlistToPlan}
-                // onChange={(_event,newValue) => setPlaylistToPlan(newValue)}
+                onChange={(_event,newValue) => 
+                  {
+                    setPlaylistToPlan(newValue);
+                    console.log("playlistToPlan", playlistToPlan);
+                  }}
                 getOptionLabel={(option) => option.name}
                 renderInput={(params) => (
                   <TextField
