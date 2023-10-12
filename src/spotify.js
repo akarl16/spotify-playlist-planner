@@ -1,5 +1,8 @@
 import SpotifyWebApi from "spotify-web-api-js";
 
+let scope = "playlist-read-collaborative playlist-read-private playlist-modify-public playlist-modify-private streaming user-read-email user-read-private user-read-playback-state user-modify-playback-state";
+let access_token;
+
 function setWithExpiry(key, value, ttl) {
 	const now = new Date()
 
@@ -128,7 +131,6 @@ function authorizeSpotify() {
 
     generateCodeChallenge(codeVerifier).then(codeChallenge => {
         let state = generateRandomString(16);
-        let scope = "playlist-read-collaborative user-modify-playback-state playlist-read-private playlist-modify-public playlist-modify-private";
         localStorage.setItem('code_verifier', codeVerifier);
         let redirect_url = window.location.href.replace(/\?$/,'');
 
@@ -155,7 +157,7 @@ async function isAuthorized() {
     }
     authorization_code = localStorage.getItem('authorization_code');
 
-    let access_token = getWithExpiry("access_token");
+    access_token = getWithExpiry("access_token");
     let refresh_token = localStorage.getItem("refresh_token");
     if (!access_token) {
         console.debug("No access_token found in local storage");
@@ -182,7 +184,11 @@ async function getSpotifyApi() {
     return spotifyApi;
 }
 
+function getAccessToken() {
+    return access_token;
+}
+
 const clientId = "c4145d13614447e9b3bcd287499086f4";
 const spotifyApi = new SpotifyWebApi();
 
-export { isAuthorized, authorizeSpotify, getSpotifyApi }
+export { isAuthorized, authorizeSpotify, getSpotifyApi, getAccessToken }

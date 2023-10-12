@@ -1,12 +1,17 @@
 import "./styles.css";
 import React, { useState, useEffect, useMemo, Fragment } from "react";
 import MaterialReactTable from "material-react-table";
+import SpotifyPlayer from "react-spotify-web-playback";
 
 import PlayCircleFilledIcon from '@mui/icons-material/PlayCircleFilled';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import MenuIcon from '@mui/icons-material/Menu';
 import PlaylistAddIcon from '@mui/icons-material/PlaylistAdd';
 import VpnKeyIcon from '@mui/icons-material/VpnKey';
+import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
+
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { icon } from '@fortawesome/fontawesome-svg-core/import.macro';
 
 import AppBar from "@mui/material/AppBar";
 import Toolbar from '@mui/material/Toolbar';
@@ -20,7 +25,7 @@ import IconButton from "@mui/material/IconButton";
 import Tooltip from "@mui/material/Tooltip";
 import Autocomplete from '@mui/material/Autocomplete';
 import TextField from '@mui/material/TextField';
-import Snackbar from '@mui/material/Snackbar';
+import Stack from '@mui/material/Stack';
 
 import "json.date-extensions";
 import * as spotify from "./spotify.js";
@@ -31,7 +36,7 @@ function App() {
   const [libraryPlaylists, setLibraryPlaylists] = useState([]);
   const [classPlaylists, setClassPlaylists] = useState([]);
   const [isSpotifyAuthorized, setIsSpotifyAuthorized] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
   const [playlistToPlan, setPlaylistToPlan] = useState();
   const [loadState, setLoadState] = useState({
     playlistHeaderCount: 0,
@@ -41,8 +46,10 @@ function App() {
     isLoading: false,
     loadMessage: ""
   });
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [playTrackUri, setPlayTrackUri] = useState([]);
 
-  
+
 
   const millisToMinutesAndSeconds = (millis) => {
     var minutes = Math.floor(millis / 60000);
@@ -52,7 +59,7 @@ function App() {
 
   const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-  
+
   const durationToMillis = (duration) => {
     const durationParts = duration.split(":");
     const millis = durationParts[0] * 60000 + durationParts[1] * 1000;
@@ -95,10 +102,10 @@ function App() {
       loadState.playlistHeaderTotal = _playlistsResult.total;
       loadState.isLoading = true;
       loadState.loadMessage = `${loadState.playlistHeaderCount}/${loadState.playlistHeaderTotal} Playlist headers`;
-      setLoadState({...loadState});
+      setLoadState({ ...loadState });
     }
     loadState.isLoading = false;
-    setLoadState({...loadState});
+    setLoadState({ ...loadState });
     return playlistHeaders;
   }
 
@@ -108,7 +115,7 @@ function App() {
     loadState.playlistDetailsTotal = _playlistHeaders.length;
     loadState.isLoading = true;
     loadState.loadMessage = `${loadState.playlistDetailsCount}/${loadState.playlistDetailsTotal} Playlist details`;
-    setLoadState({...loadState});
+    setLoadState({ ...loadState });
     const playlists = await Promise.all(
       _playlistHeaders.map(async (playlistHeader) => {
         if (!playlistHeader.trackList) {
@@ -120,7 +127,7 @@ function App() {
         loadState.playlistDetailsTotal = _playlistHeaders.length;
         loadState.isLoading = true;
         loadState.loadMessage = `${loadState.playlistDetailsCount}/${loadState.playlistDetailsTotal} Playlist details`;
-        setLoadState({...loadState});
+        setLoadState({ ...loadState });
         return playlistHeader;
       })
     );
@@ -135,7 +142,7 @@ function App() {
 
     const spotifyApi = await spotify.getSpotifyApi();
     while (more) {
-      try{
+      try {
         const tracksResult = await spotifyApi.getPlaylistTracks(_playlistId, {
           limit: 50,
           offset: offset
@@ -145,8 +152,8 @@ function App() {
         offset = offset + tracksResult.items.length;
       } catch (e) {
         console.warn("Error retrieving playlist tracks");
-        
-        if(e.status === 429) {
+
+        if (e.status === 429) {
           console.warn("Rate limit exceeded");
           await sleep(6000);
           continue; //Retry
@@ -172,15 +179,15 @@ function App() {
     const retrieveTrackIds = [];
     for (const trackId of trackIds) {
       const trackAudioFeatures = await database.getTrackAudioFeatures(trackId);
-      if(!trackAudioFeatures) {
+      if (!trackAudioFeatures) {
         retrieveTrackIds.push(trackId);
       } else {
         audioFeaturesMap.set(trackAudioFeatures.id, trackAudioFeatures);
       }
     }
-    if(retrieveTrackIds.length > 0) {
+    if (retrieveTrackIds.length > 0) {
       const retrievedTracksAudioFeatures = await retrieveTracksAudioFeatures(retrieveTrackIds);
-      for(const trackAudioFeatures of retrievedTracksAudioFeatures) {
+      for (const trackAudioFeatures of retrievedTracksAudioFeatures) {
         database.putTrackAudioFeatures(trackAudioFeatures);
         audioFeaturesMap.set(trackAudioFeatures.id, trackAudioFeatures);
       }
@@ -196,7 +203,7 @@ function App() {
     for (let i = 0; i < trackIds.length; i += batchSize) {
       const batch = trackIds.slice(i, i += batchSize);
       const getResult = await spotifyApi.getAudioFeaturesForTracks(batch);
-      if(getResult.audio_features && getResult.audio_features.length > 0) {
+      if (getResult.audio_features && getResult.audio_features.length > 0) {
         tracks.push(...getResult.audio_features);
       } else {
         console.error(`Error retrieving tracks for ${trackIds}`);
@@ -231,7 +238,7 @@ function App() {
     }
 
     const trackList = Array.from(trackMap.values());
-    
+
     //Calculate recency score
     for (const track of trackList) {
       for (const classPlaylist of classPlaylists) {
@@ -268,7 +275,7 @@ function App() {
     }
 
     trackList.sort(
-      (a, b) => a.recencyScore - b.recencyScore || b.added_at - a.added_at
+      (a, b) => (a.recencyScore - b.recencyScore || b.added_at - a.added_at)
     );
     return trackList;
   };
@@ -289,16 +296,33 @@ function App() {
     await spotifyApi.play({
       uris: [`spotify:track:${trackId}`]
     });
+    // setPlayTrackUri(`spotify:track:${trackId}`);
+    // setIsPlaying(true);
   };
 
   const addTrack = async (trackId) => {
     console.debug(`ADDING TRACK TO PLAYLIST ${trackId}`);
-    const spotifyApi = await spotify.getSpotifyApi();
-    await spotifyApi.addTracksToPlaylist(playlistToPlan.id, [`spotify:track:${trackId}`]);
+    
     const track = trackLibrary.find((track) => track.id === trackId);
     const duration_string = "0:" + millisToMinutesAndSeconds(track.duration_ms);
     navigator.clipboard.writeText(`${track.name}\t${duration_string}`);
+
+    const spotifyApi = await spotify.getSpotifyApi();
+    await spotifyApi.addTracksToPlaylist(playlistToPlan.id, [`spotify:track:${trackId}`]);
   };
+
+  const addPlaylist = async () => {
+    const date = new Date();
+
+    const spotifyApi = await spotify.getSpotifyApi();
+    const userProfile = await spotifyApi.getMe();
+    const createPlaylistResponse = await spotifyApi.createPlaylist(userProfile.id, {
+      name: `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${date.getDate()}`,
+      public: true
+    });
+    setClassPlaylists([createPlaylistResponse].concat(classPlaylists));
+    setPlaylistToPlan(createPlaylistResponse);
+  }
 
   const getData = async () => {
     setIsLoading(true);
@@ -318,8 +342,6 @@ function App() {
         _libraryRegex.test(playlist.name) ||
         _libraryRegex.test(playlist.description)
     );
-    console.debug("Library playlists");
-    console.debug(_libraryPlaylistHeaders);
 
     const _classPlaylistHeaders = _playlistHeaders.filter((playlist) =>
       _dateRegex.test(playlist.name)
@@ -330,8 +352,12 @@ function App() {
     const _classPlaylists = await getPlaylistTracks(_classPlaylistHeaders);
     _classPlaylists.sort((a, b) => b.name.localeCompare(a.name));
 
-    const _trackLibrary = await buildTrackLibrary(_libraryPlaylists, _classPlaylists);
+    console.debug("Library playlists");
+    console.debug(_libraryPlaylistHeaders);
+    console.debug("Class playlists");
+    console.debug(_classPlaylistHeaders);
 
+    const _trackLibrary = await buildTrackLibrary(_libraryPlaylists, _classPlaylists);
     console.debug("Track library");
     console.debug(_trackLibrary);
 
@@ -372,7 +398,6 @@ function App() {
 
     checkAuth()
       .catch(console.error);;
-
   }, []);
 
   useEffect(() => {
@@ -407,13 +432,15 @@ function App() {
         accessorKey: "name",
         header: "Track Name",
         size: 100,
-        enableClickToCopy: true
+        enableClickToCopy: true,
+        maxSize: 200
       },
       {
         accessorFn: (row) => row.artists.map((artist) => artist.name).join(", "),
         accessorKey: "artists",
         header: "Artist(s)",
-        size: 100
+        size: 100,
+        maxSize: 100
       },
       {
         accessorFn: (row) => millisToMinutesAndSeconds(row.duration_ms),
@@ -439,11 +466,18 @@ function App() {
         size: 20
       },
       {
-        accessorKey: "plays",
+        accessorKey: "audio_features.energy",
+        header: "Energy",
+        size: 20
+      },
+      {
+
+        accessorFn: (row) => row.plays,
         header: "Plays",
+        enableColumnFilter: false,
         size: 20,
-        Cell: ({ renderedCellValue, row }) => (
-          <Fragment>
+        Cell: ({ cell, row }) => (
+          <Box sx={{textAlign: "center"}}>
             <Tooltip
               title={row.original.plays
                 .map((play) => {
@@ -453,11 +487,12 @@ function App() {
                 .join(", ")}
             >
               <Badge
-                badgeContent={row.original.plays.length}
+                sx={{}}
+                badgeContent={`${row.original.plays.length}`}
                 color="primary"
               ></Badge>
             </Tooltip>
-          </Fragment>
+          </Box>
         )
       },
       {
@@ -487,6 +522,7 @@ function App() {
 
   return (
     <div className="App" style={{ height: "100%" }}>
+      {console.debug("Render")}
       {isLoading ? (
         <Backdrop open={true} sx={{ color: "#fff" }}>
           <CircularProgress color="inherit" />
@@ -525,38 +561,51 @@ function App() {
                 </IconButton>
               </Toolbar>
             </AppBar>
-            <Box component="main" sx={{ flexGrow: 1 }}>
-              <Autocomplete
-                id="planning-playlist-selector"
-                sx={{ width: 300 }}
-                options={classPlaylists}
-                autoHighlight
-                onChange={(_event, newValue) => {
-                  setPlaylistToPlan(newValue);
-                  console.log("playlistToPlan", playlistToPlan);
-                }}
-                getOptionLabel={(option) => option.name}
-                renderInput={(params) => (
-                  <TextField
-                    {...params}
-                    label="Choose a playlist to plan"
-                    inputProps={{
-                      ...params.inputProps,
-                      autoComplete: 'new-password', // disable autocomplete and autofill
-                    }}
-                  />
-                )}
-              />
-              {console.debug("Render: Track Library", trackLibrary)}
+            <Box component="main" sx={{ flexGrow: 1, mb: '10px' }}>
+              <Stack direction="row">
+                <Autocomplete
+                  id="planning-playlist-selector"
+                  sx={{ width: 300 }}
+                  options={classPlaylists}
+                  autoHighlight
+                  onChange={(_event, newValue) => {
+                    setPlaylistToPlan(newValue);
+                    console.log("playlistToPlan", playlistToPlan);
+                  }}
+                  getOptionLabel={(option) => option.name}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="Choose a playlist to plan"
+                      inputProps={{
+                        ...params.inputProps,
+                        autoComplete: 'new-password', // disable autocomplete and autofill
+                      }}
+                    />
+                  )}
+                />
+                <IconButton aria-label="new playlist" onClick={addPlaylist}>
+                  <AddCircleOutlineIcon />
+                </IconButton>
+              </Stack>
               <Tracks tracks={trackLibrary} />
             </Box>
-            <Snackbar
-              open={loadState.isLoading}
-              message={loadState.loadMessage}
-            />
+            <AppBar position="fixed" sx={{ top: 'auto', bottom: 0 }} color='default'>
+              <Toolbar><SpotifyPlayer
+                token={spotify.getAccessToken()}
+                syncExternalDevice={true}
+                callback={(state) => {
+                  if (!state.isPlaying) setIsPlaying(false);
+                }}
+                play={isPlaying}
+                uris={playTrackUri}
+              /></Toolbar>
+            </AppBar>
           </Box>
         ) : (
-          <Button variant="contained" color="primary" onClick={spotify.authorizeSpotify}>Authorize Spotify access</Button>
+          <Box sx={{ display: 'flex', justifyContent: 'center', alignContent: 'center', height: '100%', alignItems: 'center' }}>
+            <Button size="large" color="success" sx={{ backgroundColor: '#1DB954', fontSize: '1.5em' }} variant="contained" startIcon={<FontAwesomeIcon fontSize="inherit" icon={icon({ name: 'spotify', style: 'brands' })} />} onClick={spotify.authorizeSpotify}>Authorize Spotify access</Button>
+          </Box>
         )}
     </div>
   );

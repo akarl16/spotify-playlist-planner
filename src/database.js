@@ -30,10 +30,7 @@ async function getPlaylist(playlistId) {
 }
 
 async function getPlaylists() {
-    let tx = db.transaction('playlists', 'readonly');
-    let store = tx.objectStore('playlists');
-
-    return await store.getAll();
+    return await db.getAll('playlists');
 }
 
 async function setPlaylists(playlists) {
