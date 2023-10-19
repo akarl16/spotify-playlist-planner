@@ -301,7 +301,7 @@ function App() {
   };
 
   const addTrack = async (trackId) => {
-    console.debug(`ADDING TRACK TO PLAYLIST ${trackId}`);
+    console.debug(`ADDING TRACK ${trackId} TO PLAYLIST ${playlistToPlan.name}`);
     
     const track = trackLibrary.find((track) => track.id === trackId);
     const duration_string = "0:" + millisToMinutesAndSeconds(track.duration_ms);
@@ -570,6 +570,7 @@ function App() {
                   autoHighlight
                   onChange={(_event, newValue) => {
                     setPlaylistToPlan(newValue);
+                    playlistToPlan = newValue; //Redundant but necessary since the state won't update until re-render
                     console.log("playlistToPlan", playlistToPlan);
                   }}
                   getOptionLabel={(option) => option.name}
