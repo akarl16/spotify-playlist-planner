@@ -37,7 +37,7 @@ function App() {
   const [classPlaylists, setClassPlaylists] = useState([]);
   const [isSpotifyAuthorized, setIsSpotifyAuthorized] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [playlistToPlan, setPlaylistToPlan] = useState();
+  let [playlistToPlan, setPlaylistToPlan] = useState();
   const [loadState, setLoadState] = useState({
     playlistHeaderCount: 0,
     playlistHeaderTotal: 0,
