@@ -9,6 +9,7 @@ import MenuIcon from '@mui/icons-material/Menu';
 import PlaylistAddIcon from '@mui/icons-material/PlaylistAdd';
 import VpnKeyIcon from '@mui/icons-material/VpnKey';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
+import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
 
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { icon } from '@fortawesome/fontawesome-svg-core/import.macro';
@@ -26,12 +27,18 @@ import Tooltip from "@mui/material/Tooltip";
 import Autocomplete from '@mui/material/Autocomplete';
 import TextField from '@mui/material/TextField';
 import Stack from '@mui/material/Stack';
+import Drawer from '@mui/material/Drawer';
+import useScrollTrigger from '@mui/material/useScrollTrigger';
+import CssBaseline from '@mui/material/CssBaseline';
+import Fade from '@mui/material/Fade';
+import Fab from '@mui/material/Fab';
 
 import "json.date-extensions";
 import * as spotify from "./spotify.js";
 import * as database from "./database.js";
 
 function App() {
+  // #region React hooks
   const [trackLibrary, setTrackLibrary] = useState([]);
   const [libraryPlaylists, setLibraryPlaylists] = useState([]);
   const [classPlaylists, setClassPlaylists] = useState([]);
@@ -48,8 +55,38 @@ function App() {
   });
   const [isPlaying, setIsPlaying] = useState(false);
   const [playTrackUri, setPlayTrackUri] = useState([]);
+  // const scrollTrigger = useScrollTrigger({
+  //   disableHysteresis: true,
+  //   threshold: 0,
+  //   target: window ? window() : undefined,
+  // });
 
+  useEffect(() => {
+    async function checkAuth() {
+      console.log('init database');
+      await database.init();
+      console.log('checking authorization');
+      setIsSpotifyAuthorized(await spotify.isAuthorized());
+    }
 
+    checkAuth()
+      .catch(console.error);;
+  }, []);
+
+  useEffect(() => {
+    async function fetchData() {
+      console.log('fetching data');
+      await getData();
+      setIsLoading(false);
+    }
+    if (isSpotifyAuthorized) {
+      fetchData();
+    }
+  }, [isSpotifyAuthorized])
+
+  // #endregion
+
+  // #region util functions
 
   const millisToMinutesAndSeconds = (millis) => {
     var minutes = Math.floor(millis / 60000);
@@ -59,7 +96,6 @@ function App() {
 
   const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-
   const durationToMillis = (duration) => {
     const durationParts = duration.split(":");
     const millis = durationParts[0] * 60000 + durationParts[1] * 1000;
@@ -67,6 +103,9 @@ function App() {
     return millis;
   };
 
+  // #endregion
+
+  // #region data load functions
   const getPlaylistHeaders = async () => {
     let playlistHeaders = [];
 
@@ -290,40 +329,6 @@ function App() {
     spotify.authorizeSpotify();
   }
 
-  const playTrack = async (trackId) => {
-    console.debug(`PLAYING TRACK ${trackId}`);
-    const spotifyApi = await spotify.getSpotifyApi();
-    await spotifyApi.play({
-      uris: [`spotify:track:${trackId}`]
-    });
-    // setPlayTrackUri(`spotify:track:${trackId}`);
-    // setIsPlaying(true);
-  };
-
-  const addTrack = async (trackId) => {
-    console.debug(`ADDING TRACK ${trackId} TO PLAYLIST ${playlistToPlan.name}`);
-    
-    const track = trackLibrary.find((track) => track.id === trackId);
-    const duration_string = "0:" + millisToMinutesAndSeconds(track.duration_ms);
-    navigator.clipboard.writeText(`${track.name}\t${duration_string}`);
-
-    const spotifyApi = await spotify.getSpotifyApi();
-    await spotifyApi.addTracksToPlaylist(playlistToPlan.id, [`spotify:track:${trackId}`]);
-  };
-
-  const addPlaylist = async () => {
-    const date = new Date();
-
-    const spotifyApi = await spotify.getSpotifyApi();
-    const userProfile = await spotifyApi.getMe();
-    const createPlaylistResponse = await spotifyApi.createPlaylist(userProfile.id, {
-      name: `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${date.getDate()}`,
-      public: true
-    });
-    setClassPlaylists([createPlaylistResponse].concat(classPlaylists));
-    setPlaylistToPlan(createPlaylistResponse);
-  }
-
   const getData = async () => {
     setIsLoading(true);
     const _dateRegex = /([12]\d{3}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01]))/;
@@ -366,56 +371,53 @@ function App() {
     setTrackLibrary(_trackLibrary);
     setIsLoading(false);
   };
+  // #endregion
 
-  const Tracks = (props) => {
-    if (!props.tracks) {
-      return <div />;
-    }
-    return (
-      <div style={{ display: "flex", height: "100%" }}>
-        <div style={{ flexGrow: 1 }}>
-          <MaterialReactTable
-            columns={matColumns}
-            data={props.tracks}
-            initialState={{
-              pagination: { pageSize: 100 },
-              density: "compact",
-              showColumnFilters: true
-            }}
-          />
-        </div>
-      </div>
-    );
+  // #region runtime action functions
+  const playTrack = async (trackId) => {
+    console.debug(`PLAYING TRACK ${trackId}`);
+    const spotifyApi = await spotify.getSpotifyApi();
+    await spotifyApi.play({
+      uris: [`spotify:track:${trackId}`]
+    });
+    // setPlayTrackUri(`spotify:track:${trackId}`);
+    // setIsPlaying(true);
   };
 
-  useEffect(() => {
-    async function checkAuth() {
-      console.log('init database');
-      await database.init();
-      console.log('checking authorization');
-      setIsSpotifyAuthorized(await spotify.isAuthorized());
-    }
+  const addTrack = async (trackId) => {
+    console.debug(`ADDING TRACK ${trackId} TO PLAYLIST ${playlistToPlan.name}`);
 
-    checkAuth()
-      .catch(console.error);;
-  }, []);
+    const track = trackLibrary.find((track) => track.id === trackId);
+    const duration_string = "0:" + millisToMinutesAndSeconds(track.duration_ms);
+    navigator.clipboard.writeText(`${track.name}\t${duration_string}`);
 
-  useEffect(() => {
-    async function fetchData() {
-      console.log('fetching data');
-      await getData();
-      setIsLoading(false);
-    }
-    if (isSpotifyAuthorized) {
-      fetchData();
-    }
-  }, [isSpotifyAuthorized])
+    const spotifyApi = await spotify.getSpotifyApi();
+    await spotifyApi.addTracksToPlaylist(playlistToPlan.id, [`spotify:track:${trackId}`]);
+  };
 
+  const addPlaylist = async () => {
+    const date = new Date();
+
+    const spotifyApi = await spotify.getSpotifyApi();
+    const userProfile = await spotifyApi.getMe();
+    const createPlaylistResponse = await spotifyApi.createPlaylist(userProfile.id, {
+      name: `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${date.getDate()}`,
+      public: true
+    });
+    setClassPlaylists([createPlaylistResponse].concat(classPlaylists));
+    setPlaylistToPlan(createPlaylistResponse);
+  }
+
+  // #endregion
+
+  // #region React controls
   const matColumns = useMemo(
     () => [
       {
         id: "blah",
         header: "Actions",
+        enableHiding: false,
+        enableColumnActions: false,
         size: 40,
         Cell: ({ renderedCellValue, row }) => (
           <Fragment>
@@ -433,6 +435,7 @@ function App() {
         header: "Track Name",
         size: 100,
         enableClickToCopy: true,
+        enableColumnActions: false,
         maxSize: 200
       },
       {
@@ -477,7 +480,7 @@ function App() {
         enableColumnFilter: false,
         size: 20,
         Cell: ({ cell, row }) => (
-          <Box sx={{textAlign: "center"}}>
+          <Box sx={{ textAlign: "center" }}>
             <Tooltip
               title={row.original.plays
                 .map((play) => {
@@ -500,7 +503,7 @@ function App() {
         Cell: ({ cell }) => cell.getValue()?.toLocaleDateString(),
         header: "Added On",
         sortingFn: "datetime",
-        size: 20
+        size: 25
       },
       {
         accessorKey: "recencyScore",
@@ -510,7 +513,7 @@ function App() {
       {
         accessorKey: "lists",
         header: "Lists",
-        filterVariant: "select",
+        filterVariant: "multi-select",
         filterFn: "contains",
         filterSelectOptions: Array.from(
           libraryPlaylists?.map((libraryPlaylist) => libraryPlaylist.name)
@@ -520,95 +523,205 @@ function App() {
     [libraryPlaylists]
   );
 
-  return (
-    <div className="App" style={{ height: "100%" }}>
-      {console.debug("Render")}
-      {isLoading ? (
-        <Backdrop open={true} sx={{ color: "#fff" }}>
-          <CircularProgress color="inherit" />
-        </Backdrop>
-      )
-        : isSpotifyAuthorized ? (
-          <Box sx={{ display: "flex", marginTop: 10 }}>
-            {/* <CssBaseline /> */}
-            <AppBar
-              position="fixed"
-              color="primary"
-              sx={{ zIndex: (theme) => theme.zIndex.drawer + 1 }}
+  const Tracks = (props) => {
+    if (!props.tracks) {
+      return <Fragment />;
+    }
+    console.debug("RenderTracks");
+    return (
+      <MaterialReactTable
+        className="TrackTable"
+        layout="grid"
+        columns={matColumns}
+        enableColumnActions={false}
+        enableFullScreenToggle={false}
+        enableDensityToggle={false}
+        enableStickyHeader={true}
+        enableRowVirtualization={true}
+        enablePagination={false}
+        data={props.tracks}
+        initialState={{
+          pagination: { pageSize: 500 },
+          density: "compact",
+          showColumnFilters: true
+        }} />
+    );
+  };
+
+  // const TracksMemo = React.memo(Tracks);
+
+  function ScrollTop(props) {
+    const { children, window } = props;
+    // Note that you normally won't need to set the window ref as useScrollTrigger
+    // will default to window.
+    // This is only being set here because the demo is in an iframe.
+    const trigger = useScrollTrigger({
+      target: window ? window() : undefined,
+      disableHysteresis: true,
+      threshold: 100,
+    });
+
+    const handleClick = (event) => {
+      const anchor = (event.target.ownerDocument || document).querySelector(
+        '#back-to-top-anchor',
+      );
+
+      if (anchor) {
+        anchor.scrollIntoView({
+          block: 'center',
+        });
+      }
+    };
+
+    return (
+      <Fade in={trigger}>
+        <Box
+          onClick={handleClick}
+          role="presentation"
+          sx={{ position: 'fixed', bottom: 16, right: 16 }}
+        >
+          {children}
+        </Box>
+      </Fade>
+    );
+  }
+
+  const TopShell = () => {
+    const [drawerState, setDrawerState] = useState(false);
+    function toggleDrawer(state) {
+      console.debug(`toggledrawer ${state}`);
+      setDrawerState(state);
+    }
+
+    return (
+      <Fragment>
+        <Drawer anchor={"left"} open={drawerState} onClose={() => toggleDrawer(false)}>
+          <Box>Something in drawer</Box>
+        </Drawer>
+        
+        <AppBar position="fixed">
+          <Toolbar>
+            <IconButton color="inherit" aria-label="menu" onClick={() => toggleDrawer(!drawerState)}>
+              <MenuIcon />
+            </IconButton>
+            <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
+              Playlist Planner
+            </Typography>
+            <IconButton
+              size="large"
+              color="inherit"
+              aria-label="Authorize"
+              onClick={async () => await refreshAuthorization()}
             >
-              <Toolbar>
-                <IconButton color="inherit" aria-label="menu">
-                  <MenuIcon />
-                </IconButton>
-                <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
-                  Playlist Planner
-                </Typography>
-                <IconButton
-                  size="large"
-                  color="inherit"
-                  aria-label="Authorize"
-                  onClick={async () => await refreshAuthorization()}
-                >
-                  <VpnKeyIcon />
-                </IconButton>
-                <IconButton
-                  size="large"
-                  color="inherit"
-                  aria-label="Refresh"
-                  onClick={async () => await refreshData()}
-                >
-                  <RefreshIcon />
-                </IconButton>
-              </Toolbar>
-            </AppBar>
-            <Box component="main" sx={{ flexGrow: 1, mb: '10px' }}>
-              <Stack direction="row">
-                <Autocomplete
-                  id="planning-playlist-selector"
-                  sx={{ width: 300 }}
-                  options={classPlaylists}
-                  autoHighlight
-                  onChange={(_event, newValue) => {
-                    setPlaylistToPlan(newValue);
-                    playlistToPlan = newValue; //Redundant but necessary since the state won't update until re-render
-                    console.log("playlistToPlan", playlistToPlan);
-                  }}
-                  getOptionLabel={(option) => option.name}
-                  renderInput={(params) => (
-                    <TextField
-                      {...params}
-                      label="Choose a playlist to plan"
-                      inputProps={{
-                        ...params.inputProps,
-                        autoComplete: 'new-password', // disable autocomplete and autofill
-                      }}
-                    />
-                  )}
-                />
-                <IconButton aria-label="new playlist" onClick={addPlaylist}>
-                  <AddCircleOutlineIcon />
-                </IconButton>
-              </Stack>
-              <Tracks tracks={trackLibrary} />
-            </Box>
-            <AppBar position="fixed" sx={{ top: 'auto', bottom: 0 }} color='default'>
-              <Toolbar><SpotifyPlayer
-                token={spotify.getAccessToken()}
-                syncExternalDevice={true}
-                callback={(state) => {
-                  if (!state.isPlaying) setIsPlaying(false);
+              <VpnKeyIcon />
+            </IconButton>
+            <IconButton
+              size="large"
+              color="inherit"
+              aria-label="Refresh"
+              onClick={async () => await refreshData()}
+            >
+              <RefreshIcon />
+            </IconButton>
+          </Toolbar>
+        </AppBar>
+        <Toolbar />
+      </Fragment>
+    )
+  }
+
+  const MainContent = (props) => {
+    return (
+      <Stack className="MainContent">
+        <Stack direction="row" sx={{ position: "absolute", zIndex: 999 }}>
+          <Autocomplete
+            id="planning-playlist-selector"
+            sx={{ width: 300 }}
+            options={classPlaylists}
+            autoHighlight
+            onChange={(_event, newValue) => {
+              setPlaylistToPlan(newValue);
+              playlistToPlan = newValue; //Redundant but necessary since the state won't update until re-render
+              console.log("playlistToPlan", playlistToPlan);
+            }}
+            getOptionLabel={(option) => option.name}
+            renderInput={(params) => (
+              <TextField
+                {...params}
+                label="Choose a playlist to plan"
+                inputProps={{
+                  ...params.inputProps,
+                  autoComplete: 'new-password', // disable autocomplete and autofill
                 }}
-                play={isPlaying}
-                uris={playTrackUri}
-              /></Toolbar>
-            </AppBar>
-          </Box>
-        ) : (
-          <Box sx={{ display: 'flex', justifyContent: 'center', alignContent: 'center', height: '100%', alignItems: 'center' }}>
-            <Button size="large" color="success" sx={{ backgroundColor: '#1DB954', fontSize: '1.5em' }} variant="contained" startIcon={<FontAwesomeIcon fontSize="inherit" icon={icon({ name: 'spotify', style: 'brands' })} />} onClick={spotify.authorizeSpotify}>Authorize Spotify access</Button>
-          </Box>
-        )}
-    </div>
+              />
+            )}
+          />
+          <IconButton aria-label="new playlist" onClick={addPlaylist}>
+            <AddCircleOutlineIcon />
+          </IconButton>
+        </Stack>
+        <Tracks tracks={trackLibrary} />
+        <ScrollTop {...props}>
+          <Fab size="small" aria-label="scroll back to top">
+            <KeyboardArrowUpIcon />
+          </Fab>
+        </ScrollTop>
+      </Stack>
+    );
+  }
+
+  const BottomShell = () => {
+    const [drawerState, setDrawerState] = useState(false);
+    function toggleDrawer(state) {
+      console.debug(`toggledrawer ${state}`);
+      setDrawerState(state);
+    }
+
+    return (
+      <Fragment>
+        <IconButton sx={{ position: 'fixed', bottom: 0, left: 0, zIndex: 999 }} color="inherit" aria-label="player" onClick={() => toggleDrawer(!drawerState)}>
+          <PlayCircleFilledIcon />
+        </IconButton>
+        <Drawer anchor={"bottom"} open={drawerState} onClose={() => toggleDrawer(false)}>
+          <SpotifyPlayer
+            token={spotify.getAccessToken()}
+            syncExternalDevice={true}
+            callback={(state) => {
+              if (!state.isPlaying) setIsPlaying(false);
+            }}
+            play={isPlaying}
+            uris={playTrackUri}
+          />
+        </Drawer>
+      </Fragment>
+    );
+  }
+  // #endregion
+
+  return (
+    <Fragment component="main">
+      <CssBaseline />
+
+      <Stack className="App" spacing={1}>
+        {console.debug("Render")}
+        {isLoading ? (
+          <Backdrop className="Loader" open={true}>
+            <CircularProgress color="inherit" />
+          </Backdrop>
+        )
+          : isSpotifyAuthorized ? (
+            <Fragment>
+              <TopShell />
+              <MainContent />
+              {/* <BottomShell /> */}
+            </Fragment>
+          ) : (
+            <Box sx={{ display: 'flex', justifyContent: 'center', alignContent: 'center', height: '100%', alignItems: 'center' }}>
+              <Button size="large" color="success" sx={{ backgroundColor: '#1DB954', fontSize: '1.5em' }} variant="contained" startIcon={<FontAwesomeIcon fontSize="inherit" icon={icon({ name: 'spotify', style: 'brands' })} />} onClick={spotify.authorizeSpotify}>Authorize Spotify access</Button>
+            </Box>
+          )}
+      </Stack>
+    </Fragment>
   );
 }
 

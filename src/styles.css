@@ -1,9 +1,23 @@
 .App {
   font-family: sans-serif;
   text-align: center;
+  width: 100%;
+  /* height: 100%; */
 }
 
-#root {
+.TrackTable {
+  width: 100%;
+  /* height: 100%; */
+}
+
+.MainContent {
+  /* margin-top: 10px;
+  margin-bottom: 10px; */
+  width: 100%;
+  /* height: 100%; */
+}
+
+/* #root {
   height: 100%;
 }
 
@@ -13,4 +27,8 @@ html {
 
 body {
   height: 100%;
+} */
+
+.Loader {
+  color: "#fff";
 }
