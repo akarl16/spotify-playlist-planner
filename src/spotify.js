@@ -158,9 +158,10 @@ async function isAuthorized() {
     authorization_code = localStorage.getItem('authorization_code');
 
     access_token = getWithExpiry("access_token");
-    let refresh_token = localStorage.getItem("refresh_token");
+    
     if (!access_token) {
         console.debug("No access_token found in local storage");
+        let refresh_token = localStorage.getItem("refresh_token");
         if(refresh_token) {
             access_token = await retrieveAccessTokenFromRefresh(refresh_token);
             spotifyApi.setAccessToken(access_token);

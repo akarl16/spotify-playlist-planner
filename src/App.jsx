@@ -1,6 +1,6 @@
 import "./styles.css";
 import React, { useState, useEffect, useMemo, Fragment } from "react";
-import MaterialReactTable from "material-react-table";
+import { MaterialReactTable } from 'material-react-table';
 import SpotifyPlayer from "react-spotify-web-playback";
 
 import PlayCircleFilledIcon from '@mui/icons-material/PlayCircleFilled';
@@ -12,7 +12,7 @@ import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
 import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
 
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { icon } from '@fortawesome/fontawesome-svg-core/import.macro';
+import { icon } from '@fortawesome/fontawesome-svg-core';
 
 import AppBar from "@mui/material/AppBar";
 import Toolbar from '@mui/material/Toolbar';
@@ -134,7 +134,7 @@ function App() {
         offset: offset
       });
 
-      playlistHeaders.push(..._playlistsResult.items);
+      playlistHeaders.push(..._playlistsResult.items.filter((playlist) => playlist != null)); //Filter out nulls since Spotify likes to send those
       more = _playlistsResult.next !== null;
       offset = offset + _playlistsResult.items.length;
       loadState.playlistHeaderCount = playlistHeaders.length;
@@ -241,12 +241,17 @@ function App() {
     const tracks = [];
     for (let i = 0; i < trackIds.length; i += batchSize) {
       const batch = trackIds.slice(i, i += batchSize);
-      const getResult = await spotifyApi.getAudioFeaturesForTracks(batch);
-      if (getResult.audio_features && getResult.audio_features.length > 0) {
-        tracks.push(...getResult.audio_features);
-      } else {
-        console.error(`Error retrieving tracks for ${trackIds}`);
-        console.error(getResult);
+      try {
+        const getResult = await spotifyApi.getAudioFeaturesForTracks(batch);
+        if (getResult.audio_features && getResult.audio_features.length > 0) {
+          tracks.push(...getResult.audio_features);
+        } else {
+          console.error(`Error retrieving tracks for ${trackIds}`);
+          console.error(getResult);
+        }
+      } catch (e) {
+        console.warn("Error retrieving audio features");
+        console.error(e);
       }
     }
     return tracks;
