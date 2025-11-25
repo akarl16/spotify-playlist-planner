@@ -10,6 +10,7 @@ import PlaylistAddIcon from '@mui/icons-material/PlaylistAdd';
 import VpnKeyIcon from '@mui/icons-material/VpnKey';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
 import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
+import FilterListOffIcon from '@mui/icons-material/FilterListOff';
 
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { icon } from '@fortawesome/fontawesome-svg-core';
@@ -29,6 +30,8 @@ import TextField from '@mui/material/TextField';
 import Stack from '@mui/material/Stack';
 import Drawer from '@mui/material/Drawer';
 import useScrollTrigger from '@mui/material/useScrollTrigger';
+import Chip from '@mui/material/Chip';
+import MenuItem from '@mui/material/MenuItem';
 import CssBaseline from '@mui/material/CssBaseline';
 import Fade from '@mui/material/Fade';
 import Fab from '@mui/material/Fab';
@@ -44,7 +47,7 @@ function App() {
   const [classPlaylists, setClassPlaylists] = useState([]);
   const [isSpotifyAuthorized, setIsSpotifyAuthorized] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  let [playlistToPlan, setPlaylistToPlan] = useState();
+  const [playlistToPlan, setPlaylistToPlan] = useState(null);
   const [loadState, setLoadState] = useState({
     playlistHeaderCount: 0,
     playlistHeaderTotal: 0,
@@ -390,6 +393,11 @@ function App() {
   };
 
   const addTrack = async (trackId) => {
+    if (!playlistToPlan) {
+      console.warn("No playlist selected");
+      return;
+    }
+    
     console.debug(`ADDING TRACK ${trackId} TO PLAYLIST ${playlistToPlan.name}`);
 
     const track = trackLibrary.find((track) => track.id === trackId);
@@ -426,12 +434,32 @@ function App() {
         size: 40,
         Cell: ({ renderedCellValue, row }) => (
           <Fragment>
-            <IconButton onClick={async () => await playTrack(row.original.id)}>
-              <PlayCircleFilledIcon />
-            </IconButton>
-            <IconButton onClick={async () => await addTrack(row.original.id)}>
-              <PlaylistAddIcon />
-            </IconButton>
+            <Tooltip title="Play Track">
+              <IconButton 
+                onClick={async () => await playTrack(row.original.id)}
+                sx={{
+                  '&:hover': {
+                    color: '#1DB954',
+                    backgroundColor: 'rgba(29, 185, 84, 0.1)',
+                  }
+                }}
+              >
+                <PlayCircleFilledIcon />
+              </IconButton>
+            </Tooltip>
+            <Tooltip title="Add to Playlist">
+              <IconButton 
+                onClick={async () => await addTrack(row.original.id)}
+                sx={{
+                  '&:hover': {
+                    color: '#1DB954',
+                    backgroundColor: 'rgba(29, 185, 84, 0.1)',
+                  }
+                }}
+              >
+                <PlaylistAddIcon />
+              </IconButton>
+            </Tooltip>
           </Fragment>
         )
       },
@@ -441,20 +469,74 @@ function App() {
         size: 100,
         enableClickToCopy: true,
         enableColumnActions: false,
-        maxSize: 200
+        maxSize: 200,
+        Cell: ({ cell, column, table }) => {
+          const filterValue = column.getFilterValue();
+          const cellValue = cell.getValue();
+          
+          if (filterValue && cellValue) {
+            const regex = new RegExp(`(${filterValue})`, 'gi');
+            const parts = cellValue.split(regex);
+            return (
+              <Box sx={{ fontWeight: 500 }}>
+                {parts.map((part, index) =>
+                  regex.test(part) ? (
+                    <mark key={index}>{part}</mark>
+                  ) : (
+                    part
+                  )
+                )}
+              </Box>
+            );
+          }
+          
+          return (
+            <Box sx={{ fontWeight: 500 }}>
+              {cellValue}
+            </Box>
+          );
+        }
       },
       {
         accessorFn: (row) => row.artists.map((artist) => artist.name).join(", "),
         accessorKey: "artists",
         header: "Artist(s)",
         size: 100,
-        maxSize: 100
+        maxSize: 100,
+        Cell: ({ cell, column }) => {
+          const filterValue = column.getFilterValue();
+          const cellValue = cell.getValue();
+          
+          if (filterValue && cellValue) {
+            const regex = new RegExp(`(${filterValue})`, 'gi');
+            const parts = cellValue.split(regex);
+            return (
+              <Box sx={{ color: 'rgba(255,255,255,0.7)' }}>
+                {parts.map((part, index) =>
+                  regex.test(part) ? (
+                    <mark key={index}>{part}</mark>
+                  ) : (
+                    part
+                  )
+                )}
+              </Box>
+            );
+          }
+          
+          return (
+            <Box sx={{ color: 'rgba(255,255,255,0.7)' }}>
+              {cellValue}
+            </Box>
+          );
+        }
       },
       {
         accessorFn: (row) => millisToMinutesAndSeconds(row.duration_ms),
         header: "Duration",
-        size: 40,
+        size: 80,
         filterFn: (row, id, filterValue) => {
+          if (!filterValue) return true;
+          
           const filterMillis = /\d+:\d{2}/.test(filterValue)
             ? durationToMillis(filterValue)
             : null;
@@ -466,17 +548,74 @@ function App() {
             );
           }
           return true;
+        },
+        Filter: ({ column }) => (
+          <TextField
+            value={column.getFilterValue() || ''}
+            onChange={(e) => {
+              let value = e.target.value;
+              // Auto-format: add colon after 2 digits
+              if (value.length === 2 && !value.includes(':')) {
+                value = value + ':';
+              }
+              column.setFilterValue(value || undefined);
+            }}
+            placeholder="m:ss"
+            variant="outlined"
+            size="small"
+            inputProps={{
+              maxLength: 5
+            }}
+            sx={{
+              minWidth: '80px',
+              '& .MuiInputBase-input': {
+                fontFamily: 'monospace'
+              }
+            }}
+          />
+        ),
+        Cell: ({ cell, column }) => {
+          const filterValue = column.getFilterValue();
+          const cellValue = cell.getValue();
+          
+          // Check if the filter matches the cell value exactly (for highlighting)
+          if (filterValue && cellValue === filterValue) {
+            return (
+              <Box sx={{ fontFamily: 'monospace', color: 'rgba(255,255,255,0.8)' }}>
+                <mark>{cellValue}</mark>
+              </Box>
+            );
+          }
+          
+          return (
+            <Box sx={{ fontFamily: 'monospace', color: 'rgba(255,255,255,0.8)' }}>
+              {cellValue}
+            </Box>
+          );
         }
       },
       {
         accessorKey: "audio_features.tempo",
         header: "Tempo",
-        size: 20
+        size: 60,
+        Cell: ({ cell }) => (
+          <Box sx={{ fontWeight: 600, color: '#1DB954' }}>
+            {cell.getValue() ? Math.round(cell.getValue()) : '-'}
+          </Box>
+        )
       },
       {
         accessorKey: "audio_features.energy",
         header: "Energy",
-        size: 20
+        size: 60,
+        Cell: ({ cell }) => (
+          <Box sx={{ 
+            fontWeight: 600,
+            color: cell.getValue() > 0.7 ? '#ff4444' : cell.getValue() > 0.4 ? '#ffaa00' : '#1DB954'
+          }}>
+            {cell.getValue() ? (cell.getValue() * 100).toFixed(0) + '%' : '-'}
+          </Box>
+        )
       },
       {
 
@@ -505,23 +644,63 @@ function App() {
       },
       {
         accessorFn: (row) => row.added_at,
-        Cell: ({ cell }) => cell.getValue()?.toLocaleDateString(),
+        Cell: ({ cell }) => (
+          <Box sx={{ color: 'rgba(255,255,255,0.7)' }}>
+            {cell.getValue()?.toLocaleDateString()}
+          </Box>
+        ),
         header: "Added On",
         sortingFn: "datetime",
-        size: 25
+        size: 80
       },
       {
         accessorKey: "recencyScore",
         header: "Recency",
-        size: 20
+        size: 60,
+        Cell: ({ cell }) => (
+          <Box sx={{ 
+            fontWeight: 700,
+            color: cell.getValue() > 5 ? '#ff4444' : cell.getValue() > 0 ? '#ffaa00' : '#1DB954'
+          }}>
+            {cell.getValue()}
+          </Box>
+        )
       },
       {
         accessorKey: "lists",
         header: "Lists",
         filterVariant: "multi-select",
-        filterFn: "contains",
+        filterFn: (row, id, filterValue) => {
+          // If no filter is applied, show all rows
+          if (!filterValue || filterValue.length === 0) {
+            return true;
+          }
+          
+          // Get the track's lists as a comma-separated string
+          const trackLists = row.getValue(id);
+          if (!trackLists) {
+            return false;
+          }
+          
+          // Split into an array and trim whitespace
+          const trackListsArray = trackLists.split(',').map(list => list.trim());
+          
+          // Check if ALL filter values exist in the track's lists (order-agnostic)
+          return filterValue.every(filterList => trackListsArray.includes(filterList));
+        },
         filterSelectOptions: Array.from(
           libraryPlaylists?.map((libraryPlaylist) => libraryPlaylist.name)
+        ),
+        muiFilterTextFieldProps: {
+          placeholder: ''
+        },
+        Cell: ({ cell }) => (
+          <Box sx={{ 
+            fontSize: '0.75rem',
+            color: 'rgba(255,255,255,0.6)'
+          }}>
+            {cell.getValue()}
+          </Box>
         )
       }
     ],
@@ -535,6 +714,7 @@ function App() {
     console.debug("RenderTracks");
     return (
       <MaterialReactTable
+        key={playlistToPlan?.id || 'no-playlist'}
         className="TrackTable"
         layout="grid"
         columns={matColumns}
@@ -545,6 +725,74 @@ function App() {
         enableRowVirtualization={true}
         enablePagination={false}
         data={props.tracks}
+        renderTopToolbarCustomActions={({ table }) => (
+          <Button
+            onClick={() => table.resetColumnFilters()}
+            startIcon={<FilterListOffIcon />}
+            variant="outlined"
+            size="small"
+            sx={{
+              borderColor: 'rgba(29, 185, 84, 0.5)',
+              color: '#1DB954',
+              '&:hover': {
+                borderColor: '#1DB954',
+                backgroundColor: 'rgba(29, 185, 84, 0.1)',
+              }
+            }}
+          >
+            Clear All Filters
+          </Button>
+        )}
+        muiTableHeadCellFilterTextFieldProps={{
+          placeholder: '',
+          variant: 'outlined',
+          size: 'small',
+          sx: {
+            '& .MuiInputBase-input::placeholder': {
+              opacity: 0
+            }
+          }
+        }}
+        muiFilterTextFieldProps={{
+          SelectProps: {
+            MenuProps: {
+              BackdropProps: {
+                sx: {
+                  backgroundColor: 'rgba(0, 0, 0, 0.3)'
+                }
+              },
+              PaperProps: {
+                sx: {
+                  backgroundColor: '#404040',
+                  color: '#ffffff'
+                }
+              }
+            },
+            renderValue: (selected) => {
+              if (!selected || (Array.isArray(selected) && selected.length === 0)) {
+                return '';
+              }
+              if (Array.isArray(selected)) {
+                return (
+                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, color: '#ffffff' }}>
+                    {selected.join(', ')}
+                  </Box>
+                );
+              }
+              return <Box sx={{ color: '#ffffff' }}>{selected}</Box>;
+            }
+          }
+        }}
+        muiTableBodyCellProps={{
+          sx: {
+            '& mark': {
+              backgroundColor: 'rgba(29, 185, 84, 0.4)',
+              color: '#ffffff',
+              padding: '2px 0',
+              fontWeight: 600
+            }
+          }
+        }}
         initialState={{
           pagination: { pageSize: 500 },
           density: "compact",
@@ -601,33 +849,64 @@ function App() {
     return (
       <Fragment>
         <Drawer anchor={"left"} open={drawerState} onClose={() => toggleDrawer(false)}>
-          <Box>Something in drawer</Box>
+          <Box sx={{ width: 280, p: 3 }}>
+            <Typography variant="h5" sx={{ mb: 3, fontWeight: 700, color: '#1DB954' }}>
+              🎵 Menu
+            </Typography>
+            <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.7)' }}>
+              More features coming soon...
+            </Typography>
+          </Box>
         </Drawer>
         
-        <AppBar position="fixed">
-          <Toolbar>
-            <IconButton color="inherit" aria-label="menu" onClick={() => toggleDrawer(!drawerState)}>
-              <MenuIcon />
-            </IconButton>
-            <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
-              Playlist Planner
+        <AppBar position="fixed" elevation={0} sx={{ backdropFilter: 'blur(10px)' }}>
+          <Toolbar sx={{ py: 1 }}>
+            <Tooltip title="Menu">
+              <IconButton 
+                color="inherit" 
+                aria-label="menu" 
+                onClick={() => toggleDrawer(!drawerState)}
+                sx={{ mr: 2 }}
+              >
+                <MenuIcon />
+              </IconButton>
+            </Tooltip>
+            <Typography 
+              variant="h5" 
+              component="div" 
+              sx={{ 
+                flexGrow: 1, 
+                fontWeight: 700,
+                background: 'linear-gradient(135deg, #FFFFFF 0%, #1DB954 100%)',
+                WebkitBackgroundClip: 'text',
+                WebkitTextFillColor: 'transparent',
+                letterSpacing: '-0.5px'
+              }}
+            >
+              🎧 Playlist Planner
             </Typography>
-            <IconButton
-              size="large"
-              color="inherit"
-              aria-label="Authorize"
-              onClick={async () => await refreshAuthorization()}
-            >
-              <VpnKeyIcon />
-            </IconButton>
-            <IconButton
-              size="large"
-              color="inherit"
-              aria-label="Refresh"
-              onClick={async () => await refreshData()}
-            >
-              <RefreshIcon />
-            </IconButton>
+            <Tooltip title="Refresh Authorization">
+              <IconButton
+                size="large"
+                color="inherit"
+                aria-label="Authorize"
+                onClick={async () => await refreshAuthorization()}
+                sx={{ mx: 1 }}
+              >
+                <VpnKeyIcon />
+              </IconButton>
+            </Tooltip>
+            <Tooltip title="Refresh Data">
+              <IconButton
+                size="large"
+                color="inherit"
+                aria-label="Refresh"
+                onClick={async () => await refreshData()}
+                sx={{ mx: 1 }}
+              >
+                <RefreshIcon />
+              </IconButton>
+            </Tooltip>
           </Toolbar>
         </AppBar>
         <Toolbar />
@@ -637,23 +916,29 @@ function App() {
 
   const MainContent = (props) => {
     return (
-      <Stack className="MainContent">
-        <Stack direction="row" sx={{ position: "absolute", zIndex: 999 }}>
+      <Stack className="MainContent" spacing={2}>
+        <Box className="playlist-selector-container" sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
           <Autocomplete
             id="planning-playlist-selector"
-            sx={{ width: 300 }}
+            sx={{ 
+              width: 400,
+              '& .MuiInputBase-root': {
+                borderRadius: '24px',
+              }
+            }}
             options={classPlaylists}
+            value={playlistToPlan}
             autoHighlight
             onChange={(_event, newValue) => {
               setPlaylistToPlan(newValue);
-              playlistToPlan = newValue; //Redundant but necessary since the state won't update until re-render
-              console.log("playlistToPlan", playlistToPlan);
+              console.log("playlistToPlan", newValue);
             }}
-            getOptionLabel={(option) => option.name}
+            getOptionLabel={(option) => option?.name || ''}
             renderInput={(params) => (
               <TextField
                 {...params}
-                label="Choose a playlist to plan"
+                label="🎵 Choose a playlist to plan"
+                variant="outlined"
                 inputProps={{
                   ...params.inputProps,
                   autoComplete: 'new-password', // disable autocomplete and autofill
@@ -661,13 +946,24 @@ function App() {
               />
             )}
           />
-          <IconButton aria-label="new playlist" onClick={addPlaylist}>
-            <AddCircleOutlineIcon />
-          </IconButton>
-        </Stack>
+          <Tooltip title="Create new playlist">
+            <IconButton 
+              aria-label="new playlist" 
+              onClick={addPlaylist}
+              sx={{
+                backgroundColor: 'rgba(29, 185, 84, 0.1)',
+                '&:hover': {
+                  backgroundColor: 'rgba(29, 185, 84, 0.2)',
+                }
+              }}
+            >
+              <AddCircleOutlineIcon fontSize="large" />
+            </IconButton>
+          </Tooltip>
+        </Box>
         <Tracks tracks={trackLibrary} />
         <ScrollTop {...props}>
-          <Fab size="small" aria-label="scroll back to top">
+          <Fab size="medium" aria-label="scroll back to top">
             <KeyboardArrowUpIcon />
           </Fab>
         </ScrollTop>
@@ -711,7 +1007,17 @@ function App() {
         {console.debug("Render")}
         {isLoading ? (
           <Backdrop className="Loader" open={true}>
-            <CircularProgress color="inherit" />
+            <Box sx={{ textAlign: 'center' }}>
+              <CircularProgress size={60} sx={{ color: '#1DB954', mb: 2 }} />
+              <Typography variant="h6" sx={{ color: '#FFFFFF', fontWeight: 600 }}>
+                Loading your playlists...
+              </Typography>
+              {loadState.loadMessage && (
+                <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.7)', mt: 1 }}>
+                  {loadState.loadMessage}
+                </Typography>
+              )}
+            </Box>
           </Backdrop>
         )
           : isSpotifyAuthorized ? (
@@ -721,8 +1027,37 @@ function App() {
               {/* <BottomShell /> */}
             </Fragment>
           ) : (
-            <Box sx={{ display: 'flex', justifyContent: 'center', alignContent: 'center', height: '100%', alignItems: 'center' }}>
-              <Button size="large" color="success" sx={{ backgroundColor: '#1DB954', fontSize: '1.5em' }} variant="contained" startIcon={<FontAwesomeIcon fontSize="inherit" icon={icon({ name: 'spotify', style: 'brands' })} />} onClick={spotify.authorizeSpotify}>Authorize Spotify access</Button>
+            <Box className="auth-container">
+              <Box sx={{ textAlign: 'center' }}>
+                <div className="auth-logo">
+                  <FontAwesomeIcon icon={icon({ name: 'spotify', style: 'brands' })} />
+                </div>
+                <h1 className="auth-title">Playlist Planner</h1>
+                <p className="auth-subtitle">Your ultimate tool for managing Spotify playlists</p>
+              </Box>
+              <Button 
+                size="large" 
+                color="success" 
+                sx={{ 
+                  backgroundColor: '#1DB954',
+                  fontSize: '1.25rem',
+                  px: 6,
+                  py: 2,
+                  borderRadius: '32px',
+                  boxShadow: '0 8px 24px rgba(29, 185, 84, 0.4)',
+                  '&:hover': {
+                    backgroundColor: '#1ed760',
+                    transform: 'scale(1.05)',
+                    boxShadow: '0 12px 32px rgba(29, 185, 84, 0.6)',
+                  },
+                  transition: 'all 0.3s ease'
+                }} 
+                variant="contained" 
+                startIcon={<FontAwesomeIcon fontSize="inherit" icon={icon({ name: 'spotify', style: 'brands' })} />} 
+                onClick={spotify.authorizeSpotify}
+              >
+                Connect to Spotify
+              </Button>
             </Box>
           )}
       </Stack>
