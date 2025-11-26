@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>GetSongBPM API Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; max-width: 800px; margin: 0 auto; }
+        .result { background: #f5f5f5; padding: 15px; border-radius: 5px; margin: 10px 0; white-space: pre-wrap; word-wrap: break-word; }
+        .error { background: #ffebee; color: #c62828; }
+        .success { background: #e8f5e9; color: #2e7d32; }
+        .info { background: #e3f2fd; color: #1565c0; }
+        button { padding: 10px 20px; font-size: 16px; cursor: pointer; margin: 5px; }
+        h1 { color: #333; }
+        iframe { border: 1px solid #ccc; margin: 10px 0; }
+    </style>
+</head>
+<body>
+    <h1>GetSongBPM API Test</h1>
+    
+    <h2>Step 1: Solve Cloudflare Challenge</h2>
+    <p>First, visit GetSongBPM in a new tab to solve the Cloudflare challenge:</p>
+    <button onclick="window.open('https://getsongbpm.com', '_blank')">Open GetSongBPM Website</button>
+    <p><em>After the page loads successfully, come back here and test the API.</em></p>
+    
+    <h2>Step 2: Test API</h2>
+    <div>
+        <button onclick="testSearch()">Test Search API (CORS)</button>
+        <button onclick="testWithCredentials()">Test with Credentials</button>
+        <button onclick="clearResults()">Clear Results</button>
+    </div>
+    
+    <div id="results"></div>
+
+    <script>
+        const API_KEY = 'c4bc5574b02f36d904e28aff194062ad';
+        const resultsDiv = document.getElementById('results');
+        
+        function addResult(message, type = 'info') {
+            const div = document.createElement('div');
+            div.className = 'result ' + type;
+            div.textContent = new Date().toLocaleTimeString() + ': ' + message;
+            resultsDiv.insertBefore(div, resultsDiv.firstChild);
+        }
+        
+        function clearResults() {
+            resultsDiv.innerHTML = '';
+        }
+        
+        async function testSearch() {
+            addResult('Testing search for "Hello" by "Adele"...', 'info');
+            
+            const url = `https://api.getsongbpm.com/search/?api_key=${API_KEY}&type=song&lookup=hello%20adele`;
+            
+            try {
+                const response = await fetch(url, {
+                    method: 'GET',
+                    mode: 'cors',
+                    credentials: 'omit'
+                });
+                
+                addResult(`Status: ${response.status} ${response.statusText}`, 'info');
+                
+                const text = await response.text();
+                
+                if (text.includes('Just a moment') || text.includes('Verifying')) {
+                    addResult('❌ Got Cloudflare challenge page', 'error');
+                } else {
+                    try {
+                        const data = JSON.parse(text);
+                        addResult('✅ API works! Got JSON response:', 'success');
+                        addResult(JSON.stringify(data, null, 2), 'success');
+                    } catch (e) {
+                        addResult('Response (not JSON): ' + text.substring(0, 300), 'error');
+                    }
+                }
+            } catch (error) {
+                addResult('❌ Error: ' + error.message, 'error');
+                if (error.message.includes('Failed to fetch') || error.name === 'TypeError') {
+                    addResult('This is likely a CORS error. The GetSongBPM API does not include CORS headers.', 'error');
+                    addResult('Solution: We need a server-side proxy that can bypass Cloudflare.', 'info');
+                }
+            }
+        }
+        
+        async function testWithCredentials() {
+            addResult('Testing with credentials (cookies)...', 'info');
+            
+            const url = `https://api.getsongbpm.com/search/?api_key=${API_KEY}&type=song&lookup=hello%20adele`;
+            
+            try {
+                const response = await fetch(url, {
+                    method: 'GET',
+                    mode: 'cors',
+                    credentials: 'include'  // Send cookies
+                });
+                
+                addResult(`Status: ${response.status}`, 'info');
+                const text = await response.text();
+                addResult('Response: ' + text.substring(0, 500), text.includes('"search"') ? 'success' : 'error');
+            } catch (error) {
+                addResult('❌ Error with credentials: ' + error.message, 'error');
+            }
+        }
+    </script>
+</body>
+</html>
