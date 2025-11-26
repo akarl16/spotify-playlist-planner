@@ -220,6 +220,44 @@ async function getStorageStats() {
 }
 
 /**
+ * Get all unique tracks from playlists that don't have audio features (BPM) stored
+ * @returns {Promise<Array>} Array of track objects needing BPM analysis
+ */
+async function getTracksNeedingBpmAnalysis() {
+    const tracksNeedingAnalysis = [];
+    const seenTrackIds = new Set();
+    
+    try {
+        const playlists = await db.getAll('playlists');
+        
+        for (const playlist of playlists) {
+            if (playlist.trackList) {
+                for (const item of playlist.trackList) {
+                    const track = item.track;
+                    if (track && track.id && !seenTrackIds.has(track.id)) {
+                        seenTrackIds.add(track.id);
+                        
+                        // Check if we already have audio features for this track
+                        const existingFeatures = await getTrackAudioFeatures(track.id);
+                        if (!existingFeatures || !existingFeatures.tempo) {
+                            tracksNeedingAnalysis.push({
+                                id: track.id,
+                                name: track.name,
+                                artists: track.artists?.map(a => a.name) || []
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    } catch (error) {
+        console.error('Error getting tracks needing BPM analysis:', error);
+    }
+    
+    return tracksNeedingAnalysis;
+}
+
+/**
  * Clear all stored data
  */
 async function clearAllData() {
@@ -236,4 +274,4 @@ async function clearAllData() {
     }
 }
 
-export { init, getPlaylist, getPlaylists, setPlaylist, setPlaylists, clearPlaylists, getTrackAudioFeatures, getTracksAudioFeatures, putTrackAudioFeatures, getArtist, putArtist, getStorageStats, clearAllData }
+export { init, getPlaylist, getPlaylists, setPlaylist, setPlaylists, clearPlaylists, getTrackAudioFeatures, getTracksAudioFeatures, putTrackAudioFeatures, getArtist, putArtist, getStorageStats, clearAllData, getTracksNeedingBpmAnalysis }

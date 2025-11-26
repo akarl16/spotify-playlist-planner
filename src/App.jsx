@@ -14,6 +14,12 @@ import FilterListOffIcon from '@mui/icons-material/FilterListOff';
 import StorageIcon from '@mui/icons-material/Storage';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import BarChartIcon from '@mui/icons-material/BarChart';
+import SearchIcon from '@mui/icons-material/Search';
+import QueueMusicIcon from '@mui/icons-material/QueueMusic';
+import CloseIcon from '@mui/icons-material/Close';
+import PauseIcon from '@mui/icons-material/Pause';
+import PlayArrowIcon from '@mui/icons-material/PlayArrow';
+import MusicNoteIcon from '@mui/icons-material/MusicNote';
 
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { icon } from '@fortawesome/fontawesome-svg-core';
@@ -66,6 +72,9 @@ function App() {
   const [isSpotifyAuthorized, setIsSpotifyAuthorized] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [playlistToPlan, setPlaylistToPlan] = useState(null);
+  const [playlistDrawerOpen, setPlaylistDrawerOpen] = useState(false);
+  const [playlistTracks, setPlaylistTracks] = useState([]);
+  const [playlistTracksLoading, setPlaylistTracksLoading] = useState(false);
   const [loadState, setLoadState] = useState({
     playlistHeaderCount: 0,
     playlistHeaderTotal: 0,
@@ -77,6 +86,9 @@ function App() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [playTrackUri, setPlayTrackUri] = useState([]);
   const isFetchingBpmRef = useRef(false);
+  const bpmFetchPausedRef = useRef(false);
+  const [bpmFetchStatus, setBpmFetchStatus] = useState({ isActive: false, isPaused: false, current: 0, total: 0, currentTrack: '' });
+  const pendingTracksRef = useRef([]);
   // const scrollTrigger = useScrollTrigger({
   //   disableHysteresis: true,
   //   threshold: 0,
@@ -84,6 +96,12 @@ function App() {
   // });
 
   useEffect(() => {
+    // Hide the static HTML footer when React app loads
+    const staticFooter = document.getElementById('static-footer');
+    if (staticFooter) {
+      staticFooter.style.display = 'none';
+    }
+    
     async function checkAuth() {
       console.log('init database');
       await database.init();
@@ -250,21 +268,9 @@ function App() {
     }
     
     if (tracksNeedingRetrieval.length > 0) {
-      // Try Spotify first
-      const trackIds = tracksNeedingRetrieval.map(t => t.id);
-      const spotifyFeatures = await retrieveTracksAudioFeatures(trackIds);
-      
-      const tracksStillNeeding = [];
-      for (const track of tracksNeedingRetrieval) {
-        const features = spotifyFeatures.find(f => f && f.id === track.id);
-        if (features) {
-          features.source = 'spotify';
-          database.putTrackAudioFeatures(features);
-          audioFeaturesMap.set(features.id, features);
-        } else {
-          tracksStillNeeding.push(track);
-        }
-      }
+      // Spotify audio features API is deprecated/restricted, so skip it
+      // Go directly to GetSongBPM for tracks that need audio features
+      const tracksStillNeeding = tracksNeedingRetrieval;
       
       // Fetch GetSongBPM data in background (don't block UI)
       if (tracksStillNeeding.length > 0 && !isFetchingBpmRef.current) {
@@ -284,10 +290,27 @@ function App() {
     }
     
     isFetchingBpmRef.current = true;
+    bpmFetchPausedRef.current = false;
+    pendingTracksRef.current = [...tracks];
+    setBpmFetchStatus({ isActive: true, isPaused: false, current: 0, total: tracks.length, currentTrack: '' });
     console.log(`Starting background BPM fetch for ${tracks.length} tracks`);
     let fetched = 0;
+    let processed = 0;
     
     for (const track of tracks) {
+      // Check if paused
+      while (bpmFetchPausedRef.current) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        if (!isFetchingBpmRef.current) {
+          // Fetch was cancelled
+          setBpmFetchStatus({ isActive: false, isPaused: false, current: 0, total: 0, currentTrack: '' });
+          return;
+        }
+      }
+      
+      processed++;
+      setBpmFetchStatus(prev => ({ ...prev, current: processed, currentTrack: track.name }));
+      
       try {
         const artistName = track.artists && track.artists[0] ? track.artists[0].name : '';
         const features = await getsongbpm.searchSong(track.name, artistName);
@@ -310,6 +333,9 @@ function App() {
           }
         }
         
+        // Update pending tracks
+        pendingTracksRef.current = pendingTracksRef.current.filter(t => t.id !== track.id);
+        
         // Small delay to avoid rate limiting
         await new Promise(resolve => setTimeout(resolve, 250));
       } catch (e) {
@@ -318,8 +344,22 @@ function App() {
     }
     
     isFetchingBpmRef.current = false;
+    setBpmFetchStatus({ isActive: false, isPaused: false, current: 0, total: 0, currentTrack: '' });
     console.log(`Background BPM fetch complete: ${fetched}/${tracks.length} tracks`);
   }
+  
+  const toggleBpmFetchPause = () => {
+    if (isFetchingBpmRef.current) {
+      bpmFetchPausedRef.current = !bpmFetchPausedRef.current;
+      setBpmFetchStatus(prev => ({ ...prev, isPaused: bpmFetchPausedRef.current }));
+    }
+  };
+  
+  const resumeBpmFetch = () => {
+    if (pendingTracksRef.current.length > 0 && !isFetchingBpmRef.current) {
+      fetchBpmDataInBackground(pendingTracksRef.current);
+    }
+  };
 
   const retrieveTracksAudioFeatures = async (trackIds) => {
     console.debug(`Retrieving audio features for ${trackIds.length} tracks`);
@@ -490,6 +530,39 @@ function App() {
 
     const spotifyApi = await spotify.getSpotifyApi();
     await spotifyApi.addTracksToPlaylist(playlistToPlan.id, [`spotify:track:${trackId}`]);
+    
+    // Refresh and show the playlist drawer
+    await refreshPlaylistTracks();
+    setPlaylistDrawerOpen(true);
+  };
+
+  const refreshPlaylistTracks = async () => {
+    if (!playlistToPlan) {
+      setPlaylistTracks([]);
+      return;
+    }
+    
+    setPlaylistTracksLoading(true);
+    try {
+      const spotifyApi = await spotify.getSpotifyApi();
+      const playlistData = await spotifyApi.getPlaylist(playlistToPlan.id);
+      
+      if (playlistData.tracks && playlistData.tracks.items) {
+        const tracks = playlistData.tracks.items
+          .filter(item => item.track)
+          .map(item => ({
+            id: item.track.id,
+            name: item.track.name,
+            artists: item.track.artists?.map(a => a.name).join(', ') || '',
+            duration_ms: item.track.duration_ms,
+            album: item.track.album?.name || ''
+          }));
+        setPlaylistTracks(tracks);
+      }
+    } catch (error) {
+      console.error('Failed to refresh playlist tracks:', error);
+    }
+    setPlaylistTracksLoading(false);
   };
 
   const addPlaylist = async () => {
@@ -682,25 +755,34 @@ function App() {
         accessorKey: "audio_features.tempo",
         header: "Tempo",
         size: 60,
+        filterFn: (row, id, filterValue) => {
+          const tempo = row.getValue(id);
+          if (!tempo || !filterValue) return true;
+          const targetTempo = parseFloat(filterValue);
+          if (isNaN(targetTempo)) return true;
+          // Show entries within 15 BPM of the filter value
+          return Math.abs(tempo - targetTempo) <= 15;
+        },
         Cell: ({ cell }) => (
           <Box sx={{ fontWeight: 600, color: '#1DB954' }}>
             {cell.getValue() ? Math.round(cell.getValue()) : '-'}
           </Box>
         )
       },
-      {
-        accessorKey: "audio_features.energy",
-        header: "Energy",
-        size: 60,
-        Cell: ({ cell }) => (
-          <Box sx={{ 
-            fontWeight: 600,
-            color: cell.getValue() > 0.7 ? '#ff4444' : cell.getValue() > 0.4 ? '#ffaa00' : '#1DB954'
-          }}>
-            {cell.getValue() ? (cell.getValue() * 100).toFixed(0) + '%' : '-'}
-          </Box>
-        )
-      },
+      // Energy column hidden - Spotify audio features API deprecated
+      // {
+      //   accessorKey: "audio_features.energy",
+      //   header: "Energy",
+      //   size: 60,
+      //   Cell: ({ cell }) => (
+      //     <Box sx={{ 
+      //       fontWeight: 600,
+      //       color: cell.getValue() > 0.7 ? '#ff4444' : cell.getValue() > 0.4 ? '#ffaa00' : '#1DB954'
+      //     }}>
+      //       {cell.getValue() ? (cell.getValue() * 100).toFixed(0) + '%' : '-'}
+      //     </Box>
+      //   )
+      // },
       {
 
         accessorFn: (row) => row.plays,
@@ -809,23 +891,165 @@ function App() {
         enableRowVirtualization={true}
         enablePagination={false}
         data={props.tracks}
+        muiTableHeadCellProps={{
+          sx: {
+            '& .MuiTableSortLabel-icon': {
+              color: 'rgba(255, 255, 255, 0.7) !important',
+            },
+            '& .MuiTableSortLabel-root.Mui-active .MuiTableSortLabel-icon': {
+              color: '#1DB954 !important',
+            },
+          }
+        }}
         renderTopToolbarCustomActions={({ table }) => (
-          <Button
-            onClick={() => table.resetColumnFilters()}
-            startIcon={<FilterListOffIcon />}
-            variant="outlined"
-            size="small"
-            sx={{
-              borderColor: 'rgba(29, 185, 84, 0.5)',
-              color: '#1DB954',
-              '&:hover': {
-                borderColor: '#1DB954',
-                backgroundColor: 'rgba(29, 185, 84, 0.1)',
-              }
-            }}
-          >
-            Clear All Filters
-          </Button>
+          <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
+            <Autocomplete
+              id="planning-playlist-selector"
+              sx={{ 
+                width: 300,
+                '& .MuiInputBase-root': {
+                  borderRadius: '24px',
+                  height: '36px',
+                },
+                '& .MuiInputLabel-root': {
+                  top: '-6px',
+                },
+                '& .MuiInputLabel-shrink': {
+                  top: '0px',
+                }
+              }}
+              size="small"
+              options={classPlaylists}
+              value={playlistToPlan}
+              autoHighlight
+              onChange={(_event, newValue) => {
+                setPlaylistToPlan(newValue);
+                console.log("playlistToPlan", newValue);
+              }}
+              getOptionLabel={(option) => option?.name || ''}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label="🎵 Playlist to plan"
+                  variant="outlined"
+                  inputProps={{
+                    ...params.inputProps,
+                    autoComplete: 'new-password',
+                  }}
+                />
+              )}
+            />
+            <Tooltip title="Create new playlist">
+              <IconButton 
+                aria-label="new playlist" 
+                onClick={addPlaylist}
+                size="small"
+                sx={{
+                  backgroundColor: 'rgba(29, 185, 84, 0.1)',
+                  '&:hover': {
+                    backgroundColor: 'rgba(29, 185, 84, 0.2)',
+                  }
+                }}
+              >
+                <AddCircleOutlineIcon />
+              </IconButton>
+            </Tooltip>
+            <Tooltip title="View playlist tracks">
+              <IconButton 
+                aria-label="view playlist" 
+                onClick={() => {
+                  refreshPlaylistTracks();
+                  setPlaylistDrawerOpen(true);
+                }}
+                size="small"
+                disabled={!playlistToPlan}
+                sx={{
+                  backgroundColor: playlistToPlan ? 'rgba(29, 185, 84, 0.1)' : 'transparent',
+                  '&:hover': {
+                    backgroundColor: 'rgba(29, 185, 84, 0.2)',
+                  }
+                }}
+              >
+                <QueueMusicIcon />
+              </IconButton>
+            </Tooltip>
+            <Button
+              onClick={() => table.resetColumnFilters()}
+              startIcon={<FilterListOffIcon />}
+              variant="outlined"
+              size="small"
+              sx={{
+                borderColor: 'rgba(29, 185, 84, 0.5)',
+                color: '#1DB954',
+                '&:hover': {
+                  borderColor: '#1DB954',
+                  backgroundColor: 'rgba(29, 185, 84, 0.1)',
+                }
+              }}
+            >
+              Clear Filters
+            </Button>
+            
+            {/* BPM Fetch Status Indicator */}
+            {(bpmFetchStatus.isActive || pendingTracksRef.current.length > 0) && (
+              <Box sx={{ 
+                display: 'flex', 
+                alignItems: 'center', 
+                gap: 1,
+                backgroundColor: 'rgba(77, 208, 225, 0.1)',
+                borderRadius: '20px',
+                px: 2,
+                py: 0.5,
+                border: '1px solid rgba(77, 208, 225, 0.3)'
+              }}>
+                {bpmFetchStatus.isActive && !bpmFetchStatus.isPaused && (
+                  <CircularProgress size={16} sx={{ color: '#4dd0e1' }} />
+                )}
+                {bpmFetchStatus.isPaused && (
+                  <MusicNoteIcon sx={{ fontSize: 16, color: '#ffc107' }} />
+                )}
+                {!bpmFetchStatus.isActive && pendingTracksRef.current.length > 0 && (
+                  <MusicNoteIcon sx={{ fontSize: 16, color: 'rgba(255,255,255,0.5)' }} />
+                )}
+                <Typography variant="caption" sx={{ color: '#4dd0e1', whiteSpace: 'nowrap' }}>
+                  {bpmFetchStatus.isActive 
+                    ? `BPM: ${bpmFetchStatus.current}/${bpmFetchStatus.total}`
+                    : `${pendingTracksRef.current.length} pending`
+                  }
+                </Typography>
+                {bpmFetchStatus.isActive && (
+                  <Tooltip title={bpmFetchStatus.isPaused ? "Resume" : "Pause"}>
+                    <IconButton
+                      size="small"
+                      onClick={toggleBpmFetchPause}
+                      sx={{ 
+                        p: 0.5,
+                        color: bpmFetchStatus.isPaused ? '#1DB954' : '#ffc107',
+                        '&:hover': { backgroundColor: 'rgba(255,255,255,0.1)' }
+                      }}
+                    >
+                      {bpmFetchStatus.isPaused ? <PlayArrowIcon sx={{ fontSize: 18 }} /> : <PauseIcon sx={{ fontSize: 18 }} />}
+                    </IconButton>
+                  </Tooltip>
+                )}
+                {!bpmFetchStatus.isActive && pendingTracksRef.current.length > 0 && (
+                  <Tooltip title="Resume fetching BPM data">
+                    <IconButton
+                      size="small"
+                      onClick={resumeBpmFetch}
+                      sx={{ 
+                        p: 0.5,
+                        color: '#1DB954',
+                        '&:hover': { backgroundColor: 'rgba(255,255,255,0.1)' }
+                      }}
+                    >
+                      <PlayArrowIcon sx={{ fontSize: 18 }} />
+                    </IconButton>
+                  </Tooltip>
+                )}
+              </Box>
+            )}
+          </Box>
         )}
         muiTableHeadCellFilterTextFieldProps={{
           placeholder: '',
@@ -930,6 +1154,9 @@ function App() {
     const [statsLoading, setStatsLoading] = useState(false);
     const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
     const [clearingData, setClearingData] = useState(false);
+    const [analyzingBpm, setAnalyzingBpm] = useState(false);
+    const [analysisProgress, setAnalysisProgress] = useState({ current: 0, total: 0 });
+    const [analysisError, setAnalysisError] = useState(null);
     
     function toggleDrawer(state) {
       console.debug(`toggledrawer ${state}`);
@@ -962,6 +1189,86 @@ function App() {
         console.error('Failed to clear data:', error);
       }
       setClearingData(false);
+    };
+    
+    const handleAnalyzeMissingBpm = async () => {
+      if (isFetchingBpmRef.current || analyzingBpm) {
+        console.log('BPM analysis already in progress');
+        return;
+      }
+      
+      // Reset API key status in case user updated the key
+      getsongbpm.resetApiKeyStatus();
+      setAnalysisError(null);
+      setAnalyzingBpm(true);
+      
+      try {
+        const tracksToAnalyze = await database.getTracksNeedingBpmAnalysis();
+        setAnalysisProgress({ current: 0, total: tracksToAnalyze.length });
+        
+        if (tracksToAnalyze.length === 0) {
+          console.log('All tracks already have BPM data');
+          setAnalyzingBpm(false);
+          return;
+        }
+        
+        console.log(`Starting BPM analysis for ${tracksToAnalyze.length} tracks`);
+        isFetchingBpmRef.current = true;
+        let fetched = 0;
+        
+        for (const track of tracksToAnalyze) {
+          // Check if API key became invalid
+          const apiStatus = getsongbpm.getApiKeyStatus();
+          if (!apiStatus.valid) {
+            setAnalysisError(apiStatus.error);
+            break;
+          }
+          
+          try {
+            const artistName = track.artists && track.artists[0] ? track.artists[0] : '';
+            const features = await getsongbpm.searchSong(track.name, artistName);
+            
+            // Check again after request in case it failed
+            const postStatus = getsongbpm.getApiKeyStatus();
+            if (!postStatus.valid) {
+              setAnalysisError(postStatus.error);
+              break;
+            }
+            
+            if (features) {
+              const audioFeatures = {
+                id: track.id,
+                tempo: features.tempo,
+                energy: features.energy,
+                danceability: features.danceability,
+                key: features.key,
+                source: 'getsongbpm'
+              };
+              await database.putTrackAudioFeatures(audioFeatures);
+              fetched++;
+            }
+            
+            setAnalysisProgress(prev => ({ ...prev, current: prev.current + 1 }));
+            
+            // Small delay to avoid rate limiting
+            await new Promise(resolve => setTimeout(resolve, 250));
+          } catch (e) {
+            console.warn(`Failed to get BPM for ${track.name}:`, e);
+            setAnalysisProgress(prev => ({ ...prev, current: prev.current + 1 }));
+          }
+        }
+        
+        console.log(`BPM analysis complete: ${fetched}/${tracksToAnalyze.length} tracks found`);
+        isFetchingBpmRef.current = false;
+        
+        // Refresh stats after analysis
+        await loadStorageStats();
+      } catch (error) {
+        console.error('BPM analysis failed:', error);
+        setAnalysisError('BPM analysis failed: ' + error.message);
+      }
+      
+      setAnalyzingBpm(false);
     };
     
     const formatBytes = (bytes) => {
@@ -1140,18 +1447,6 @@ function App() {
                           sx={{ backgroundColor: 'rgba(244, 67, 54, 0.2)', color: '#f44336' }}
                         />
                       </Box>
-                      <Box sx={{ display: 'flex', gap: 3 }}>
-                        <Box>
-                          <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.7)' }}>
-                            Average: <strong>{storageStats.audioFeatures.avgTempo} BPM</strong>
-                          </Typography>
-                        </Box>
-                        <Box>
-                          <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.7)' }}>
-                            Range: <strong>{Math.round(storageStats.audioFeatures.minTempo)} - {Math.round(storageStats.audioFeatures.maxTempo)} BPM</strong>
-                          </Typography>
-                        </Box>
-                      </Box>
                     </Box>
                   )}
                 </Box>
@@ -1167,23 +1462,78 @@ function App() {
                     {storageStats.artists.count}
                   </Typography>
                 </Box>
+                
+                {/* Analysis Progress */}
+                {(analyzingBpm || analysisError || analysisProgress.current > 0) && (
+                  <Box sx={{ mt: 2 }}>
+                    <Divider sx={{ borderColor: 'rgba(255,255,255,0.1)', mb: 2 }} />
+                    
+                    {analysisError ? (
+                      <Alert 
+                        severity="error" 
+                        sx={{ 
+                          backgroundColor: 'rgba(244, 67, 54, 0.1)',
+                          color: '#f44336',
+                          '& .MuiAlert-icon': { color: '#f44336' }
+                        }}
+                        onClose={() => setAnalysisError(null)}
+                      >
+                        {analysisError}
+                      </Alert>
+                    ) : (
+                      <>
+                        <Typography variant="subtitle2" sx={{ color: '#1DB954', mb: 1 }}>
+                          {analyzingBpm ? '🔍 Analyzing BPM Data...' : '✅ Analysis Complete'}
+                        </Typography>
+                        <LinearProgress 
+                          variant="determinate" 
+                          value={analysisProgress.total > 0 ? (analysisProgress.current / analysisProgress.total) * 100 : 0}
+                          sx={{ 
+                            height: 8, 
+                            borderRadius: 4,
+                            backgroundColor: 'rgba(255,255,255,0.1)',
+                            '& .MuiLinearProgress-bar': {
+                              backgroundColor: '#1DB954'
+                            }
+                          }}
+                        />
+                        <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.7)', display: 'block', mt: 1 }}>
+                          {analysisProgress.current} / {analysisProgress.total} tracks processed
+                        </Typography>
+                      </>
+                    )}
+                  </Box>
+                )}
               </Stack>
             ) : (
               <Alert severity="error">Failed to load statistics</Alert>
             )}
           </DialogContent>
-          <DialogActions sx={{ borderTop: '1px solid rgba(255,255,255,0.1)', px: 3, py: 2 }}>
+          <DialogActions sx={{ borderTop: '1px solid rgba(255,255,255,0.1)', px: 3, py: 2, justifyContent: 'space-between' }}>
             <Button 
               onClick={() => setClearConfirmOpen(true)}
               color="error"
               startIcon={<DeleteOutlineIcon />}
-              disabled={statsLoading}
+              disabled={statsLoading || analyzingBpm}
             >
               Clear All Data
             </Button>
-            <Button onClick={() => setStatsDialogOpen(false)} sx={{ color: '#1DB954' }}>
-              Close
-            </Button>
+            <Box sx={{ display: 'flex', gap: 1 }}>
+              <Button 
+                onClick={handleAnalyzeMissingBpm}
+                startIcon={analyzingBpm ? <CircularProgress size={16} sx={{ color: '#fff' }} /> : <SearchIcon />}
+                disabled={statsLoading || analyzingBpm || !storageStats}
+                sx={{ 
+                  color: '#4dd0e1',
+                  '&:hover': { backgroundColor: 'rgba(77, 208, 225, 0.1)' }
+                }}
+              >
+                {analyzingBpm ? 'Analyzing...' : 'Analyze Missing BPM'}
+              </Button>
+              <Button onClick={() => setStatsDialogOpen(false)} sx={{ color: '#1DB954' }}>
+                Close
+              </Button>
+            </Box>
           </DialogActions>
         </Dialog>
         
@@ -1379,54 +1729,97 @@ function App() {
     )
   }
 
+  const PlaylistDrawer = () => {
+    const totalDuration = playlistTracks.reduce((sum, track) => sum + (track.duration_ms || 0), 0);
+    
+    return (
+      <Drawer
+        anchor="right"
+        open={playlistDrawerOpen}
+        onClose={() => setPlaylistDrawerOpen(false)}
+        PaperProps={{
+          sx: {
+            width: 400,
+            backgroundColor: '#1e1e1e',
+            backgroundImage: 'none',
+          }
+        }}
+      >
+        <Box sx={{ p: 2, borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
+            <Typography variant="h6" sx={{ color: '#fff', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 1 }}>
+              <QueueMusicIcon sx={{ color: '#1DB954' }} />
+              {playlistToPlan?.name || 'No Playlist Selected'}
+            </Typography>
+            <IconButton onClick={() => setPlaylistDrawerOpen(false)} size="small" sx={{ color: 'rgba(255,255,255,0.7)' }}>
+              <CloseIcon />
+            </IconButton>
+          </Box>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+            <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.7)' }}>
+              {playlistTracks.length} tracks • {millisToMinutesAndSeconds(totalDuration)}
+            </Typography>
+            <Tooltip title="Refresh playlist">
+              <IconButton 
+                onClick={refreshPlaylistTracks} 
+                size="small" 
+                disabled={playlistTracksLoading}
+                sx={{ color: '#1DB954' }}
+              >
+                {playlistTracksLoading ? <CircularProgress size={16} sx={{ color: '#1DB954' }} /> : <RefreshIcon fontSize="small" />}
+              </IconButton>
+            </Tooltip>
+          </Box>
+        </Box>
+        
+        <Box sx={{ flex: 1, overflow: 'auto', p: 1 }}>
+          {playlistTracksLoading && playlistTracks.length === 0 ? (
+            <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
+              <CircularProgress sx={{ color: '#1DB954' }} />
+            </Box>
+          ) : playlistTracks.length === 0 ? (
+            <Box sx={{ p: 4, textAlign: 'center' }}>
+              <Typography sx={{ color: 'rgba(255,255,255,0.5)' }}>
+                No tracks in this playlist yet
+              </Typography>
+            </Box>
+          ) : (
+            <List dense>
+              {playlistTracks.map((track, index) => (
+                <ListItem 
+                  key={track.id + '-' + index}
+                  sx={{ 
+                    borderRadius: 1,
+                    mb: 0.5,
+                    '&:hover': { backgroundColor: 'rgba(29, 185, 84, 0.1)' }
+                  }}
+                >
+                  <ListItemText
+                    primary={
+                      <Typography variant="body2" sx={{ color: '#fff', fontWeight: 500 }} noWrap>
+                        {index + 1}. {track.name}
+                      </Typography>
+                    }
+                    secondary={
+                      <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.5)' }} noWrap>
+                        {track.artists} • {millisToMinutesAndSeconds(track.duration_ms)}
+                      </Typography>
+                    }
+                  />
+                </ListItem>
+              ))}
+            </List>
+          )}
+        </Box>
+      </Drawer>
+    );
+  };
+
   const MainContent = (props) => {
     return (
-      <Stack className="MainContent" spacing={2}>
-        <Box className="playlist-selector-container" sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
-          <Autocomplete
-            id="planning-playlist-selector"
-            sx={{ 
-              width: 400,
-              '& .MuiInputBase-root': {
-                borderRadius: '24px',
-              }
-            }}
-            options={classPlaylists}
-            value={playlistToPlan}
-            autoHighlight
-            onChange={(_event, newValue) => {
-              setPlaylistToPlan(newValue);
-              console.log("playlistToPlan", newValue);
-            }}
-            getOptionLabel={(option) => option?.name || ''}
-            renderInput={(params) => (
-              <TextField
-                {...params}
-                label="🎵 Choose a playlist to plan"
-                variant="outlined"
-                inputProps={{
-                  ...params.inputProps,
-                  autoComplete: 'new-password', // disable autocomplete and autofill
-                }}
-              />
-            )}
-          />
-          <Tooltip title="Create new playlist">
-            <IconButton 
-              aria-label="new playlist" 
-              onClick={addPlaylist}
-              sx={{
-                backgroundColor: 'rgba(29, 185, 84, 0.1)',
-                '&:hover': {
-                  backgroundColor: 'rgba(29, 185, 84, 0.2)',
-                }
-              }}
-            >
-              <AddCircleOutlineIcon fontSize="large" />
-            </IconButton>
-          </Tooltip>
-        </Box>
+      <Stack className="MainContent" spacing={0}>
         <Tracks tracks={trackLibrary} />
+        <PlaylistDrawer />
         <ScrollTop {...props}>
           <Fab size="medium" aria-label="scroll back to top">
             <KeyboardArrowUpIcon />
@@ -1468,7 +1861,7 @@ function App() {
     <Fragment component="main">
       <CssBaseline />
 
-      <Stack className="App" spacing={1}>
+      <Stack className="App" spacing={0}>
         {console.debug("Render")}
         {isLoading ? (
           <Backdrop className="Loader" open={true}>

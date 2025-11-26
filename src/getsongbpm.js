@@ -20,9 +20,36 @@ const API_KEY = process.env.REACT_APP_GETSONGBPM_API_KEY;
  * @param {string} artist - Artist name
  * @returns {Promise<object|null>} - Song data with tempo or null if not found
  */
+// Track API key status to avoid repeated failed requests
+let apiKeyValid = true;
+let apiKeyError = null;
+
+/**
+ * Check if the API key is currently valid
+ * @returns {{ valid: boolean, error: string|null }}
+ */
+function getApiKeyStatus() {
+  return { valid: apiKeyValid, error: apiKeyError };
+}
+
+/**
+ * Reset API key status (call after updating the key)
+ */
+function resetApiKeyStatus() {
+  apiKeyValid = true;
+  apiKeyError = null;
+}
+
 async function searchSong(title, artist) {
   if (!API_KEY) {
-    console.warn('GetSongBPM API key not configured');
+    apiKeyValid = false;
+    apiKeyError = 'GetSongBPM API key not configured. Add REACT_APP_GETSONGBPM_API_KEY to .env.local';
+    console.warn(apiKeyError);
+    return null;
+  }
+
+  // Don't make requests if we know the key is invalid
+  if (!apiKeyValid) {
     return null;
   }
 
@@ -39,6 +66,12 @@ async function searchSong(title, artist) {
     const response = await fetch(url);
     
     if (!response.ok) {
+      if (response.status === 401) {
+        apiKeyValid = false;
+        apiKeyError = 'GetSongBPM API key is invalid or expired. Please get a new key at https://getsongbpm.com/api';
+        console.error(apiKeyError);
+        return null;
+      }
       if (response.status === 429) {
         console.warn('GetSongBPM rate limit exceeded');
       }
@@ -46,6 +79,16 @@ async function searchSong(title, artist) {
     }
     
     const data = await response.json();
+    
+    // Check for API error response (e.g., invalid key)
+    if (data.error) {
+      if (data.error.includes('Invalid API Key') || data.error.includes('inactive')) {
+        apiKeyValid = false;
+        apiKeyError = 'GetSongBPM API key is invalid or inactive. Please get a new key at https://getsongbpm.com/api';
+        console.error(apiKeyError);
+      }
+      return null;
+    }
     
     // API returns { search: [...] } on success, { search: { error: "no result" } } on no results
     if (data.search && Array.isArray(data.search) && data.search.length > 0) {
@@ -229,4 +272,4 @@ async function getAudioFeaturesForTracks(tracks, onProgress = null) {
   return results;
 }
 
-export { searchSong, getSongDetails, getAudioFeaturesForTracks };
+export { searchSong, getSongDetails, getAudioFeaturesForTracks, getApiKeyStatus, resetApiKeyStatus };
