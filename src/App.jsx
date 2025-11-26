@@ -35,6 +35,9 @@ import MenuItem from '@mui/material/MenuItem';
 import CssBaseline from '@mui/material/CssBaseline';
 import Fade from '@mui/material/Fade';
 import Fab from '@mui/material/Fab';
+import Link from '@mui/material/Link';
+import Divider from '@mui/material/Divider';
+import LocalBarIcon from '@mui/icons-material/LocalBar';
 
 import "json.date-extensions";
 import * as spotify from "./spotify.js";
@@ -849,13 +852,96 @@ function App() {
     return (
       <Fragment>
         <Drawer anchor={"left"} open={drawerState} onClose={() => toggleDrawer(false)}>
-          <Box sx={{ width: 280, p: 3 }}>
+          <Box sx={{ width: 300, p: 3, height: '100%', display: 'flex', flexDirection: 'column' }}>
             <Typography variant="h5" sx={{ mb: 3, fontWeight: 700, color: '#1DB954' }}>
               🎵 Menu
             </Typography>
-            <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.7)' }}>
-              More features coming soon...
-            </Typography>
+            
+            <Box sx={{ flexGrow: 1 }}>
+              <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.7)', mb: 2 }}>
+                More features coming soon...
+              </Typography>
+            </Box>
+            
+            <Divider sx={{ my: 2, borderColor: 'rgba(255,255,255,0.1)' }} />
+            
+            {/* Credits Section */}
+            <Box sx={{ mt: 'auto' }}>
+              <Typography variant="overline" sx={{ color: 'rgba(255,255,255,0.5)', display: 'block', mb: 2 }}>
+                Powered By
+              </Typography>
+              
+              {/* Spotify Credit */}
+              <Link 
+                href="https://www.spotify.com" 
+                target="_blank" 
+                rel="noopener noreferrer"
+                sx={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  mb: 2,
+                  textDecoration: 'none',
+                  '&:hover': { opacity: 0.8 }
+                }}
+              >
+                <Box 
+                  component="img" 
+                  src="https://storage.googleapis.com/pr-newsroom-wp/1/2023/05/Spotify_Full_Logo_RGB_Green.png" 
+                  alt="Spotify" 
+                  sx={{ height: 24, mr: 1 }} 
+                />
+              </Link>
+              
+              {/* GetSongBPM Credit */}
+              <Link 
+                href="https://getsongbpm.com" 
+                target="_blank" 
+                rel="noopener noreferrer"
+                sx={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  mb: 2,
+                  textDecoration: 'none',
+                  '&:hover': { opacity: 0.8 }
+                }}
+              >
+                <Box 
+                  component="img" 
+                  src="/spotify-playlist-planner/logo_bpm.png" 
+                  alt="GetSongBPM" 
+                  sx={{ height: 28 }} 
+                />
+              </Link>
+              
+              <Divider sx={{ my: 2, borderColor: 'rgba(255,255,255,0.1)' }} />
+              
+              {/* Developer Credit */}
+              <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.7)', mb: 1 }}>
+                Made with ❤️ by Adam Karl
+              </Typography>
+              <Link 
+                href="https://venmo.com/Adam-Karl-3?txn=pay&amount=5&note=Thanks%20for%20Playlist%20Planner!" 
+                target="_blank" 
+                rel="noopener noreferrer"
+                sx={{ textDecoration: 'none' }}
+              >
+                <Button
+                  variant="outlined"
+                  size="small"
+                  startIcon={<LocalBarIcon />}
+                  sx={{
+                    borderColor: '#008CFF',
+                    color: '#008CFF',
+                    '&:hover': {
+                      borderColor: '#008CFF',
+                      backgroundColor: 'rgba(0, 140, 255, 0.1)',
+                    }
+                  }}
+                >
+                  Buy me a beer 🍺
+                </Button>
+              </Link>
+            </Box>
           </Box>
         </Drawer>
         
@@ -1058,6 +1144,68 @@ function App() {
               >
                 Connect to Spotify
               </Button>
+              
+              {/* Credits Section */}
+              <Divider sx={{ my: 4, width: '100%', maxWidth: 300, borderColor: 'rgba(255,255,255,0.1)' }} />
+              
+              <Typography variant="overline" sx={{ color: 'rgba(255,255,255,0.5)', display: 'block', mb: 2 }}>
+                Powered By
+              </Typography>
+              
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 3, mb: 3 }}>
+                <Link 
+                  href="https://www.spotify.com" 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  sx={{ '&:hover': { opacity: 0.8 } }}
+                >
+                  <Box 
+                    component="img" 
+                    src="https://storage.googleapis.com/pr-newsroom-wp/1/2023/05/Spotify_Full_Logo_RGB_Green.png" 
+                    alt="Spotify" 
+                    sx={{ height: 24 }} 
+                  />
+                </Link>
+                <Link 
+                  href="https://getsongbpm.com" 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  sx={{ '&:hover': { opacity: 0.8 }, textDecoration: 'none' }}
+                >
+                  <Box 
+                    component="img" 
+                    src="/spotify-playlist-planner/logo_bpm.png" 
+                    alt="GetSongBPM" 
+                    sx={{ height: 28 }} 
+                  />
+                </Link>
+              </Box>
+              
+              <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.7)', mb: 1 }}>
+                Made with ❤️ by Adam Karl
+              </Typography>
+              <Link 
+                href="https://venmo.com/Adam-Karl-3?txn=pay&amount=5&note=Thanks%20for%20Playlist%20Planner!" 
+                target="_blank" 
+                rel="noopener noreferrer"
+                sx={{ textDecoration: 'none' }}
+              >
+                <Button
+                  variant="outlined"
+                  size="small"
+                  startIcon={<LocalBarIcon />}
+                  sx={{
+                    borderColor: '#008CFF',
+                    color: '#008CFF',
+                    '&:hover': {
+                      borderColor: '#008CFF',
+                      backgroundColor: 'rgba(0, 140, 255, 0.1)',
+                    }
+                  }}
+                >
+                  Buy me a beer 🍺
+                </Button>
+              </Link>
             </Box>
           )}
       </Stack>
