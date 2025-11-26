@@ -1,6 +1,9 @@
 {
   "buildCommand": "npm run build",
   "outputDirectory": "build",
+  "env": {
+    "PUBLIC_URL": ""
+  },
   "rewrites": [
     {
       "source": "/api/getsongbpm/(.*)",
