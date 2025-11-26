@@ -895,8 +895,7 @@ function App() {
               {/* GetSongBPM Credit */}
               <Link 
                 href="https://getsongbpm.com" 
-                target="_blank" 
-                rel="noopener noreferrer"
+                target="_blank"
                 sx={{ 
                   display: 'flex', 
                   alignItems: 'center', 
@@ -1168,8 +1167,7 @@ function App() {
                 </Link>
                 <Link 
                   href="https://getsongbpm.com" 
-                  target="_blank" 
-                  rel="noopener noreferrer"
+                  target="_blank"
                   sx={{ '&:hover': { opacity: 0.8 }, textDecoration: 'none' }}
                 >
                   <Box 
