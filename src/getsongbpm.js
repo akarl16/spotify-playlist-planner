@@ -2,14 +2,15 @@
  * GetSongBPM API Service
  * https://getsongbpm.com/api
  * 
- * Uses Vercel Edge Function as a proxy to avoid CORS issues
+ * Makes direct browser calls to the GetSongBPM API.
+ * 
+ * IMPORTANT: Use api.getsong.co (not api.getsongbpm.com)
+ * - api.getsongbpm.com has Cloudflare Turnstile challenge that blocks requests
+ * - api.getsong.co is the redirect target with CORS enabled (access-control-allow-origin: *)
  */
 
-// In production (Vercel), use the edge function proxy
-// In development, also use the production proxy since local dev doesn't have the edge function
-const API_BASE = process.env.NODE_ENV === 'production' 
-  ? '/api/getsongbpm'
-  : 'https://spotify-playlist-planner.vercel.app/api/getsongbpm';
+// Use api.getsong.co directly to bypass Cloudflare challenge on api.getsongbpm.com
+const API_BASE = 'https://api.getsong.co';
   
 const API_KEY = process.env.REACT_APP_GETSONGBPM_API_KEY;
 
@@ -30,7 +31,9 @@ async function searchSong(title, artist) {
     const cleanTitle = cleanSearchTerm(title);
     const cleanArtist = cleanSearchTerm(artist);
     
-    const searchQuery = encodeURIComponent(`${cleanTitle} ${cleanArtist}`);
+    // IMPORTANT: Search by title only - the API doesn't work well with combined "title artist" searches
+    // We'll filter results by artist after getting them
+    const searchQuery = encodeURIComponent(cleanTitle);
     const url = `${API_BASE}/search/?api_key=${API_KEY}&type=song&lookup=${searchQuery}`;
     
     const response = await fetch(url);
@@ -44,12 +47,23 @@ async function searchSong(title, artist) {
     
     const data = await response.json();
     
-    if (data.search && data.search.length > 0) {
-      // Find best match
+    // API returns { search: [...] } on success, { search: { error: "no result" } } on no results
+    if (data.search && Array.isArray(data.search) && data.search.length > 0) {
+      // Find best match by artist
       const match = findBestMatch(data.search, cleanTitle, cleanArtist);
       if (match) {
-        // Get full song details for tempo
-        return await getSongDetails(match.id);
+        // Search results already include tempo, key, danceability, acousticness
+        // So we can return directly without a second API call
+        return {
+          tempo: match.tempo ? parseFloat(match.tempo) : null,
+          key: match.key_of || null,
+          timeSignature: match.time_sig || null,
+          danceability: match.danceability || null,
+          acousticness: match.acousticness || null,
+          artist: match.artist?.name || null,
+          album: match.album?.title || null,
+          source: 'getsongbpm'
+        };
       }
     }
     
@@ -114,35 +128,66 @@ function cleanSearchTerm(term) {
 
 /**
  * Find best matching song from search results
+ * Priority: exact artist match > partial artist match > null (no fallback to wrong artist)
  */
 function findBestMatch(results, title, artist) {
-  const normalizedTitle = title.toLowerCase();
-  const normalizedArtist = artist.toLowerCase();
+  const normalizedTitle = title.toLowerCase().trim();
+  const normalizedArtist = artist.toLowerCase().trim();
   
-  // First try exact matches
-  for (const result of results) {
-    const resultTitle = (result.title || '').toLowerCase();
-    const resultArtist = (result.artist?.name || '').toLowerCase();
+  // Split artist name for multi-word matching (e.g., "Michael Jackson" -> ["michael", "jackson"])
+  const artistWords = normalizedArtist.split(/\s+/).filter(w => w.length > 2);
+  
+  // Score each result
+  const scored = results.map(result => {
+    const resultTitle = (result.title || '').toLowerCase().trim();
+    const resultArtist = (result.artist?.name || '').toLowerCase().trim();
     
-    if (resultTitle === normalizedTitle && resultArtist.includes(normalizedArtist)) {
-      return result;
+    let titleScore = 0;
+    let artistScore = 0;
+    
+    // Title matching (required for a good match)
+    if (resultTitle === normalizedTitle) {
+      titleScore = 100; // Exact title match
+    } else if (resultTitle.includes(normalizedTitle) || normalizedTitle.includes(resultTitle)) {
+      titleScore = 50; // Partial title match
     }
-  }
-  
-  // Then try partial matches
-  for (const result of results) {
-    const resultTitle = (result.title || '').toLowerCase();
-    const resultArtist = (result.artist?.name || '').toLowerCase();
     
-    if (resultTitle.includes(normalizedTitle) || normalizedTitle.includes(resultTitle)) {
-      if (resultArtist.includes(normalizedArtist) || normalizedArtist.includes(resultArtist)) {
-        return result;
+    // Skip if no title match
+    if (titleScore === 0) {
+      return { result, score: 0, hasArtistMatch: false };
+    }
+    
+    // Artist matching
+    if (resultArtist === normalizedArtist) {
+      artistScore = 100; // Exact artist match
+    } else if (resultArtist.includes(normalizedArtist) || normalizedArtist.includes(resultArtist)) {
+      artistScore = 75; // Partial artist match
+    } else {
+      // Check if any significant words from artist match
+      const artistWordMatches = artistWords.filter(word => resultArtist.includes(word));
+      if (artistWordMatches.length > 0) {
+        artistScore = 25 * artistWordMatches.length; // Partial word match
       }
     }
+    
+    return { 
+      result, 
+      score: titleScore + artistScore, 
+      hasArtistMatch: artistScore > 0 
+    };
+  });
+  
+  // Sort by score descending
+  scored.sort((a, b) => b.score - a.score);
+  
+  // Only return if we have both a title match AND artist match
+  // This prevents returning a cover version when the original artist isn't in the database
+  if (scored.length > 0 && scored[0].hasArtistMatch) {
+    return scored[0].result;
   }
   
-  // Return first result as fallback
-  return results[0] || null;
+  // Return null rather than wrong artist - database doesn't have this song/artist combo
+  return null;
 }
 
 /**

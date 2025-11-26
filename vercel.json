@@ -1,8 +1,14 @@
 {
+  "buildCommand": "npm run build",
+  "outputDirectory": "build",
   "rewrites": [
     {
-      "source": "/api/getsongbpm/:path*",
-      "destination": "/api/getsongbpm/:path*"
+      "source": "/api/getsongbpm/(.*)",
+      "destination": "/api/getsongbpm/$1"
+    },
+    {
+      "source": "/((?!api/).*)",
+      "destination": "/index.html"
     }
   ],
   "headers": [
