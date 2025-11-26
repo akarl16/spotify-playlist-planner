@@ -1,9 +1,16 @@
 /**
  * GetSongBPM API Service
  * https://getsongbpm.com/api
+ * 
+ * Uses Vercel Edge Function as a proxy to avoid CORS issues
  */
 
-const API_BASE = 'https://api.getsongbpm.com';
+// In production (Vercel), use the edge function proxy
+// In development, also use the production proxy since local dev doesn't have the edge function
+const API_BASE = process.env.NODE_ENV === 'production' 
+  ? '/api/getsongbpm'
+  : 'https://spotify-playlist-planner.vercel.app/api/getsongbpm';
+  
 const API_KEY = process.env.REACT_APP_GETSONGBPM_API_KEY;
 
 /**

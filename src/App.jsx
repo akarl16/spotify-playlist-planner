@@ -1,5 +1,5 @@
 import "./styles.css";
-import React, { useState, useEffect, useMemo, Fragment } from "react";
+import React, { useState, useEffect, useMemo, Fragment, useRef } from "react";
 import { MaterialReactTable } from 'material-react-table';
 import SpotifyPlayer from "react-spotify-web-playback";
 
@@ -62,6 +62,7 @@ function App() {
   });
   const [isPlaying, setIsPlaying] = useState(false);
   const [playTrackUri, setPlayTrackUri] = useState([]);
+  const isFetchingBpmRef = useRef(false);
   // const scrollTrigger = useScrollTrigger({
   //   disableHysteresis: true,
   //   threshold: 0,
@@ -251,41 +252,79 @@ function App() {
         }
       }
       
-      // Use GetSongBPM for tracks that Spotify couldn't provide
-      if (tracksStillNeeding.length > 0) {
-        console.log(`Using GetSongBPM for ${tracksStillNeeding.length} tracks`);
-        const bpmFeatures = await getsongbpm.getAudioFeaturesForTracks(tracksStillNeeding, (current, total) => {
-          console.debug(`GetSongBPM: ${current}/${total}`);
-        });
-        
-        for (const [trackId, features] of bpmFeatures) {
-          database.putTrackAudioFeatures(features);
-          audioFeaturesMap.set(trackId, features);
-        }
+      // Fetch GetSongBPM data in background (don't block UI)
+      if (tracksStillNeeding.length > 0 && !isFetchingBpmRef.current) {
+        console.log(`Will fetch GetSongBPM data for ${tracksStillNeeding.length} tracks in background`);
+        // Don't await - let it run in background
+        fetchBpmDataInBackground(tracksStillNeeding);
       }
     }
     
     return audioFeaturesMap;
   }
+  
+  const fetchBpmDataInBackground = async (tracks) => {
+    if (isFetchingBpmRef.current) {
+      console.log('BPM fetch already in progress, skipping');
+      return;
+    }
+    
+    isFetchingBpmRef.current = true;
+    console.log(`Starting background BPM fetch for ${tracks.length} tracks`);
+    let fetched = 0;
+    
+    for (const track of tracks) {
+      try {
+        const artistName = track.artists && track.artists[0] ? track.artists[0].name : '';
+        const features = await getsongbpm.searchSong(track.name, artistName);
+        
+        if (features) {
+          const audioFeatures = {
+            id: track.id,
+            tempo: features.tempo,
+            energy: features.energy,
+            danceability: features.danceability,
+            key: features.key,
+            source: 'getsongbpm'
+          };
+          await database.putTrackAudioFeatures(audioFeatures);
+          fetched++;
+          
+          // Log progress every 10 tracks
+          if (fetched % 10 === 0) {
+            console.log(`BPM fetch progress: ${fetched} tracks fetched`);
+          }
+        }
+        
+        // Small delay to avoid rate limiting
+        await new Promise(resolve => setTimeout(resolve, 250));
+      } catch (e) {
+        console.warn(`Failed to get BPM for ${track.name}:`, e);
+      }
+    }
+    
+    isFetchingBpmRef.current = false;
+    console.log(`Background BPM fetch complete: ${fetched}/${tracks.length} tracks`);
+  }
 
   const retrieveTracksAudioFeatures = async (trackIds) => {
-    console.debug(`Retrieving tracks ${trackIds}`);
+    console.debug(`Retrieving audio features for ${trackIds.length} tracks`);
     const batchSize = 100;
     const spotifyApi = await spotify.getSpotifyApi();
     const tracks = [];
     for (let i = 0; i < trackIds.length; i += batchSize) {
-      const batch = trackIds.slice(i, i += batchSize);
+      const batch = trackIds.slice(i, i + batchSize);
       try {
         const getResult = await spotifyApi.getAudioFeaturesForTracks(batch);
         if (getResult.audio_features && getResult.audio_features.length > 0) {
           tracks.push(...getResult.audio_features);
         } else {
-          console.error(`Error retrieving tracks for ${trackIds}`);
+          console.error(`Error retrieving tracks for batch starting at ${i}`);
           console.error(getResult);
         }
       } catch (e) {
-        console.warn("Error retrieving audio features");
-        console.error(e);
+        console.warn("Error retrieving audio features from Spotify (this is expected for dev mode apps)");
+        // Don't log full error to avoid spam - Spotify API is restricted
       }
     }
     return tracks;
