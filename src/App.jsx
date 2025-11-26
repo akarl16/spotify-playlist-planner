@@ -64,6 +64,87 @@ import * as spotify from "./spotify.js";
 import * as database from "./database.js";
 import * as getsongbpm from "./getsongbpm.js";
 
+// Isolated BPM Fetch Indicator component - manages its own state to avoid re-rendering parent
+const BpmFetchIndicator = React.memo(({ statusRef, onPause, onResume }) => {
+  const [status, setStatus] = useState({ isActive: false, isPaused: false, current: 0, total: 0, currentTrack: '' });
+  
+  useEffect(() => {
+    // Poll the ref for status updates instead of receiving state from parent
+    const interval = setInterval(() => {
+      if (statusRef.current) {
+        setStatus({ ...statusRef.current });
+      }
+    }, 500); // Update UI every 500ms
+    
+    return () => clearInterval(interval);
+  }, [statusRef]);
+  
+  const hasPending = status.pending > 0;
+  
+  if (!status.isActive && !hasPending) {
+    return null;
+  }
+  
+  return (
+    <Box sx={{ 
+      display: 'flex', 
+      alignItems: 'center', 
+      gap: 1,
+      backgroundColor: 'rgba(77, 208, 225, 0.1)',
+      borderRadius: '20px',
+      px: 2,
+      py: 0.5,
+      border: '1px solid rgba(77, 208, 225, 0.3)'
+    }}>
+      {status.isActive && !status.isPaused && (
+        <CircularProgress size={16} sx={{ color: '#4dd0e1' }} />
+      )}
+      {status.isPaused && (
+        <MusicNoteIcon sx={{ fontSize: 16, color: '#ffc107' }} />
+      )}
+      {!status.isActive && hasPending && (
+        <MusicNoteIcon sx={{ fontSize: 16, color: 'rgba(255,255,255,0.5)' }} />
+      )}
+      <Typography variant="caption" sx={{ color: '#4dd0e1', whiteSpace: 'nowrap' }}>
+        {status.isActive 
+          ? `BPM: ${status.current}/${status.total}`
+          : `${status.pending} pending`
+        }
+      </Typography>
+      {status.isActive && (
+        <Tooltip title={status.isPaused ? "Resume" : "Pause"}>
+          <IconButton
+            size="small"
+            onClick={onPause}
+            sx={{ 
+              p: 0.5,
+              color: status.isPaused ? '#1DB954' : '#ffc107',
+              '&:hover': { backgroundColor: 'rgba(255,255,255,0.1)' }
+            }}
+          >
+            {status.isPaused ? <PlayArrowIcon sx={{ fontSize: 18 }} /> : <PauseIcon sx={{ fontSize: 18 }} />}
+          </IconButton>
+        </Tooltip>
+      )}
+      {!status.isActive && hasPending && (
+        <Tooltip title="Resume fetching BPM data">
+          <IconButton
+            size="small"
+            onClick={onResume}
+            sx={{ 
+              p: 0.5,
+              color: '#1DB954',
+              '&:hover': { backgroundColor: 'rgba(255,255,255,0.1)' }
+            }}
+          >
+            <PlayArrowIcon sx={{ fontSize: 18 }} />
+          </IconButton>
+        </Tooltip>
+      )}
+    </Box>
+  );
+});
+
 function App() {
   // #region React hooks
   const [trackLibrary, setTrackLibrary] = useState([]);
@@ -87,7 +168,7 @@ function App() {
   const [playTrackUri, setPlayTrackUri] = useState([]);
   const isFetchingBpmRef = useRef(false);
   const bpmFetchPausedRef = useRef(false);
-  const [bpmFetchStatus, setBpmFetchStatus] = useState({ isActive: false, isPaused: false, current: 0, total: 0, currentTrack: '' });
+  const bpmStatusRef = useRef({ isActive: false, isPaused: false, current: 0, total: 0, currentTrack: '', pending: 0 });
   const pendingTracksRef = useRef([]);
   // const scrollTrigger = useScrollTrigger({
   //   disableHysteresis: true,
@@ -261,8 +342,13 @@ function App() {
     for (const track of tracks) {
       const trackAudioFeatures = await database.getTrackAudioFeatures(track.id);
       if (!trackAudioFeatures) {
+        // No record at all - needs retrieval
         tracksNeedingRetrieval.push(track);
+      } else if (trackAudioFeatures.source === 'getsongbpm-notfound') {
+        // Already checked but not found - don't add to map (no BPM to show)
+        // and don't re-fetch
       } else {
+        // Has valid audio features
         audioFeaturesMap.set(trackAudioFeatures.id, trackAudioFeatures);
       }
     }
@@ -292,7 +378,7 @@ function App() {
     isFetchingBpmRef.current = true;
     bpmFetchPausedRef.current = false;
     pendingTracksRef.current = [...tracks];
-    setBpmFetchStatus({ isActive: true, isPaused: false, current: 0, total: tracks.length, currentTrack: '' });
+    bpmStatusRef.current = { isActive: true, isPaused: false, current: 0, total: tracks.length, currentTrack: '', pending: tracks.length };
     console.log(`Starting background BPM fetch for ${tracks.length} tracks`);
     let fetched = 0;
     let processed = 0;
@@ -303,13 +389,20 @@ function App() {
         await new Promise(resolve => setTimeout(resolve, 100));
         if (!isFetchingBpmRef.current) {
           // Fetch was cancelled
-          setBpmFetchStatus({ isActive: false, isPaused: false, current: 0, total: 0, currentTrack: '' });
+          bpmStatusRef.current = { isActive: false, isPaused: false, current: 0, total: 0, currentTrack: '', pending: 0 };
           return;
         }
       }
       
       processed++;
-      setBpmFetchStatus(prev => ({ ...prev, current: processed, currentTrack: track.name }));
+      
+      // Update ref directly - the BpmFetchIndicator component polls this
+      bpmStatusRef.current = { 
+        ...bpmStatusRef.current, 
+        current: processed, 
+        currentTrack: track.name,
+        pending: pendingTracksRef.current.length 
+      };
       
       try {
         const artistName = track.artists && track.artists[0] ? track.artists[0].name : '';
@@ -331,10 +424,21 @@ function App() {
           if (fetched % 10 === 0) {
             console.log(`BPM fetch progress: ${fetched} tracks fetched`);
           }
+        } else {
+          // Save a record indicating we checked but found nothing
+          // This prevents re-checking on page refresh
+          const notFoundRecord = {
+            id: track.id,
+            tempo: null,
+            source: 'getsongbpm-notfound',
+            checkedAt: new Date().toISOString()
+          };
+          await database.putTrackAudioFeatures(notFoundRecord);
         }
         
         // Update pending tracks
         pendingTracksRef.current = pendingTracksRef.current.filter(t => t.id !== track.id);
+        bpmStatusRef.current.pending = pendingTracksRef.current.length;
         
         // Small delay to avoid rate limiting
         await new Promise(resolve => setTimeout(resolve, 250));
@@ -344,14 +448,14 @@ function App() {
     }
     
     isFetchingBpmRef.current = false;
-    setBpmFetchStatus({ isActive: false, isPaused: false, current: 0, total: 0, currentTrack: '' });
+    bpmStatusRef.current = { isActive: false, isPaused: false, current: 0, total: 0, currentTrack: '', pending: pendingTracksRef.current.length };
     console.log(`Background BPM fetch complete: ${fetched}/${tracks.length} tracks`);
   }
   
   const toggleBpmFetchPause = () => {
     if (isFetchingBpmRef.current) {
       bpmFetchPausedRef.current = !bpmFetchPausedRef.current;
-      setBpmFetchStatus(prev => ({ ...prev, isPaused: bpmFetchPausedRef.current }));
+      bpmStatusRef.current = { ...bpmStatusRef.current, isPaused: bpmFetchPausedRef.current };
     }
   };
   
@@ -990,65 +1094,12 @@ function App() {
               Clear Filters
             </Button>
             
-            {/* BPM Fetch Status Indicator */}
-            {(bpmFetchStatus.isActive || pendingTracksRef.current.length > 0) && (
-              <Box sx={{ 
-                display: 'flex', 
-                alignItems: 'center', 
-                gap: 1,
-                backgroundColor: 'rgba(77, 208, 225, 0.1)',
-                borderRadius: '20px',
-                px: 2,
-                py: 0.5,
-                border: '1px solid rgba(77, 208, 225, 0.3)'
-              }}>
-                {bpmFetchStatus.isActive && !bpmFetchStatus.isPaused && (
-                  <CircularProgress size={16} sx={{ color: '#4dd0e1' }} />
-                )}
-                {bpmFetchStatus.isPaused && (
-                  <MusicNoteIcon sx={{ fontSize: 16, color: '#ffc107' }} />
-                )}
-                {!bpmFetchStatus.isActive && pendingTracksRef.current.length > 0 && (
-                  <MusicNoteIcon sx={{ fontSize: 16, color: 'rgba(255,255,255,0.5)' }} />
-                )}
-                <Typography variant="caption" sx={{ color: '#4dd0e1', whiteSpace: 'nowrap' }}>
-                  {bpmFetchStatus.isActive 
-                    ? `BPM: ${bpmFetchStatus.current}/${bpmFetchStatus.total}`
-                    : `${pendingTracksRef.current.length} pending`
-                  }
-                </Typography>
-                {bpmFetchStatus.isActive && (
-                  <Tooltip title={bpmFetchStatus.isPaused ? "Resume" : "Pause"}>
-                    <IconButton
-                      size="small"
-                      onClick={toggleBpmFetchPause}
-                      sx={{ 
-                        p: 0.5,
-                        color: bpmFetchStatus.isPaused ? '#1DB954' : '#ffc107',
-                        '&:hover': { backgroundColor: 'rgba(255,255,255,0.1)' }
-                      }}
-                    >
-                      {bpmFetchStatus.isPaused ? <PlayArrowIcon sx={{ fontSize: 18 }} /> : <PauseIcon sx={{ fontSize: 18 }} />}
-                    </IconButton>
-                  </Tooltip>
-                )}
-                {!bpmFetchStatus.isActive && pendingTracksRef.current.length > 0 && (
-                  <Tooltip title="Resume fetching BPM data">
-                    <IconButton
-                      size="small"
-                      onClick={resumeBpmFetch}
-                      sx={{ 
-                        p: 0.5,
-                        color: '#1DB954',
-                        '&:hover': { backgroundColor: 'rgba(255,255,255,0.1)' }
-                      }}
-                    >
-                      <PlayArrowIcon sx={{ fontSize: 18 }} />
-                    </IconButton>
-                  </Tooltip>
-                )}
-              </Box>
-            )}
+            {/* BPM Fetch Status Indicator - isolated component to prevent re-renders */}
+            <BpmFetchIndicator 
+              statusRef={bpmStatusRef}
+              onPause={toggleBpmFetchPause}
+              onResume={resumeBpmFetch}
+            />
           </Box>
         )}
         muiTableHeadCellFilterTextFieldProps={{

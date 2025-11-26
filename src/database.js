@@ -239,7 +239,12 @@ async function getTracksNeedingBpmAnalysis() {
                         
                         // Check if we already have audio features for this track
                         const existingFeatures = await getTrackAudioFeatures(track.id);
-                        if (!existingFeatures || !existingFeatures.tempo) {
+                        // Skip if we have features with tempo OR if we already checked and found nothing
+                        const alreadyChecked = existingFeatures && (
+                            existingFeatures.tempo || 
+                            existingFeatures.source === 'getsongbpm-notfound'
+                        );
+                        if (!alreadyChecked) {
                             tracksNeedingAnalysis.push({
                                 id: track.id,
                                 name: track.name,
