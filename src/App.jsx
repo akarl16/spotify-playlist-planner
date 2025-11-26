@@ -1,5 +1,5 @@
 import "./styles.css";
-import React, { useState, useEffect, useMemo, Fragment, useRef } from "react";
+import React, { useState, useEffect, useMemo, useCallback, Fragment, useRef } from "react";
 import { MaterialReactTable } from 'material-react-table';
 import SpotifyPlayer from "react-spotify-web-playback";
 
@@ -620,7 +620,7 @@ function App() {
     // setIsPlaying(true);
   };
 
-  const addTrack = async (trackId) => {
+  const addTrack = useCallback(async (trackId) => {
     if (!playlistToPlan) {
       console.warn("No playlist selected");
       return;
@@ -638,7 +638,7 @@ function App() {
     // Refresh and show the playlist drawer
     await refreshPlaylistTracks();
     setPlaylistDrawerOpen(true);
-  };
+  }, [playlistToPlan, trackLibrary]);
 
   const refreshPlaylistTracks = async () => {
     if (!playlistToPlan) {
@@ -974,7 +974,7 @@ function App() {
         )
       }
     ],
-    [libraryPlaylists]
+    [libraryPlaylists, addTrack]
   );
 
   const Tracks = (props) => {
