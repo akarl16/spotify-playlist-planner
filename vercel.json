@@ -1,6 +1,11 @@
 {
   "buildCommand": "npm run build",
   "outputDirectory": "build",
+  "git": {
+    "deploymentEnabled": {
+      "gh-pages": false
+    }
+  },
   "env": {
     "PUBLIC_URL": ""
   },
