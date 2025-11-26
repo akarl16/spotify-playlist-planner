@@ -42,6 +42,7 @@ import LocalBarIcon from '@mui/icons-material/LocalBar';
 import "json.date-extensions";
 import * as spotify from "./spotify.js";
 import * as database from "./database.js";
+import * as getsongbpm from "./getsongbpm.js";
 
 function App() {
   // #region React hooks
@@ -219,24 +220,51 @@ function App() {
     });
   };
 
-  const getTracksAudioFeatures = async (trackIds) => {
+  const getTracksAudioFeatures = async (tracks) => {
     const audioFeaturesMap = new Map();
-    const retrieveTrackIds = [];
-    for (const trackId of trackIds) {
-      const trackAudioFeatures = await database.getTrackAudioFeatures(trackId);
+    const tracksNeedingRetrieval = [];
+    
+    // Check cache first
+    for (const track of tracks) {
+      const trackAudioFeatures = await database.getTrackAudioFeatures(track.id);
       if (!trackAudioFeatures) {
-        retrieveTrackIds.push(trackId);
+        tracksNeedingRetrieval.push(track);
       } else {
         audioFeaturesMap.set(trackAudioFeatures.id, trackAudioFeatures);
       }
     }
-    if (retrieveTrackIds.length > 0) {
-      const retrievedTracksAudioFeatures = await retrieveTracksAudioFeatures(retrieveTrackIds);
-      for (const trackAudioFeatures of retrievedTracksAudioFeatures) {
-        database.putTrackAudioFeatures(trackAudioFeatures);
-        audioFeaturesMap.set(trackAudioFeatures.id, trackAudioFeatures);
+    
+    if (tracksNeedingRetrieval.length > 0) {
+      // Try Spotify first
+      const trackIds = tracksNeedingRetrieval.map(t => t.id);
+      const spotifyFeatures = await retrieveTracksAudioFeatures(trackIds);
+      
+      const tracksStillNeeding = [];
+      for (const track of tracksNeedingRetrieval) {
+        const features = spotifyFeatures.find(f => f && f.id === track.id);
+        if (features) {
+          features.source = 'spotify';
+          database.putTrackAudioFeatures(features);
+          audioFeaturesMap.set(features.id, features);
+        } else {
+          tracksStillNeeding.push(track);
+        }
+      }
+      
+      // Use GetSongBPM for tracks that Spotify couldn't provide
+      if (tracksStillNeeding.length > 0) {
+        console.log(`Using GetSongBPM for ${tracksStillNeeding.length} tracks`);
+        const bpmFeatures = await getsongbpm.getAudioFeaturesForTracks(tracksStillNeeding, (current, total) => {
+          console.debug(`GetSongBPM: ${current}/${total}`);
+        });
+        
+        for (const [trackId, features] of bpmFeatures) {
+          database.putTrackAudioFeatures(features);
+          audioFeaturesMap.set(trackId, features);
+        }
       }
     }
+    
     return audioFeaturesMap;
   }
 
@@ -319,7 +347,7 @@ function App() {
     }
 
     //Add track audio details
-    const tracksAudioDetails = await getTracksAudioFeatures(trackList.map(track => track.id));
+    const tracksAudioDetails = await getTracksAudioFeatures(trackList);
     for (const track of trackList) {
       track.audio_features = tracksAudioDetails.get(track.id);
     }
