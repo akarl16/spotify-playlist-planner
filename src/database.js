@@ -93,4 +93,147 @@ async function putArtist(artist) {
     await db.put('artists', artist, artist.id);
 }
 
-export { init, getPlaylist, getPlaylists, setPlaylist, setPlaylists, clearPlaylists, getTrackAudioFeatures, getTracksAudioFeatures, putTrackAudioFeatures, getArtist, putArtist }
+/**
+ * Get statistics about the stored data
+ * @returns {Promise<Object>} Statistics about playlists, tracks, and artists
+ */
+async function getStorageStats() {
+    const stats = {
+        playlists: {
+            count: 0,
+            totalTracks: 0,
+            libraryPlaylists: 0,
+            classPlaylists: 0
+        },
+        audioFeatures: {
+            count: 0,
+            withTempo: 0,
+            withEnergy: 0,
+            withDanceability: 0,
+            spotifySource: 0,
+            getsongbpmSource: 0,
+            tempoDistribution: {
+                slow: 0,      // < 100 BPM
+                medium: 0,    // 100-130 BPM
+                fast: 0,      // 130-160 BPM
+                veryFast: 0   // > 160 BPM
+            },
+            avgTempo: 0,
+            minTempo: null,
+            maxTempo: null
+        },
+        artists: {
+            count: 0
+        },
+        storageSize: {
+            estimated: null
+        }
+    };
+
+    try {
+        // Get playlists stats
+        const playlists = await db.getAll('playlists');
+        stats.playlists.count = playlists.length;
+        
+        const dateRegex = /([12]\d{3}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01]))/;
+        const libraryRegex = /\[LIBRARY\]/;
+        
+        for (const playlist of playlists) {
+            if (playlist.trackList) {
+                stats.playlists.totalTracks += playlist.trackList.length;
+            }
+            if (libraryRegex.test(playlist.name) || libraryRegex.test(playlist.description || '')) {
+                stats.playlists.libraryPlaylists++;
+            }
+            if (dateRegex.test(playlist.name)) {
+                stats.playlists.classPlaylists++;
+            }
+        }
+
+        // Get audio features stats
+        const audioFeatures = await db.getAll('tracksAudioFeatures');
+        stats.audioFeatures.count = audioFeatures.length;
+        
+        let tempoSum = 0;
+        let tempoCount = 0;
+        
+        for (const feature of audioFeatures) {
+            if (feature.tempo !== null && feature.tempo !== undefined) {
+                stats.audioFeatures.withTempo++;
+                const tempo = parseFloat(feature.tempo);
+                if (!isNaN(tempo)) {
+                    tempoSum += tempo;
+                    tempoCount++;
+                    
+                    if (stats.audioFeatures.minTempo === null || tempo < stats.audioFeatures.minTempo) {
+                        stats.audioFeatures.minTempo = tempo;
+                    }
+                    if (stats.audioFeatures.maxTempo === null || tempo > stats.audioFeatures.maxTempo) {
+                        stats.audioFeatures.maxTempo = tempo;
+                    }
+                    
+                    // Categorize tempo
+                    if (tempo < 100) {
+                        stats.audioFeatures.tempoDistribution.slow++;
+                    } else if (tempo < 130) {
+                        stats.audioFeatures.tempoDistribution.medium++;
+                    } else if (tempo < 160) {
+                        stats.audioFeatures.tempoDistribution.fast++;
+                    } else {
+                        stats.audioFeatures.tempoDistribution.veryFast++;
+                    }
+                }
+            }
+            if (feature.energy !== null && feature.energy !== undefined) {
+                stats.audioFeatures.withEnergy++;
+            }
+            if (feature.danceability !== null && feature.danceability !== undefined) {
+                stats.audioFeatures.withDanceability++;
+            }
+            if (feature.source === 'spotify') {
+                stats.audioFeatures.spotifySource++;
+            } else if (feature.source === 'getsongbpm') {
+                stats.audioFeatures.getsongbpmSource++;
+            }
+        }
+        
+        if (tempoCount > 0) {
+            stats.audioFeatures.avgTempo = Math.round(tempoSum / tempoCount);
+        }
+
+        // Get artists stats
+        const artists = await db.getAll('artists');
+        stats.artists.count = artists.length;
+
+        // Estimate storage size
+        if (navigator.storage && navigator.storage.estimate) {
+            const estimate = await navigator.storage.estimate();
+            stats.storageSize.estimated = estimate.usage;
+            stats.storageSize.quota = estimate.quota;
+        }
+
+    } catch (error) {
+        console.error('Error getting storage stats:', error);
+    }
+
+    return stats;
+}
+
+/**
+ * Clear all stored data
+ */
+async function clearAllData() {
+    try {
+        let tx = db.transaction(['playlists', 'tracksAudioFeatures', 'artists'], 'readwrite');
+        await tx.objectStore('playlists').clear();
+        await tx.objectStore('tracksAudioFeatures').clear();
+        await tx.objectStore('artists').clear();
+        await tx.done;
+        console.log('All data cleared');
+    } catch (error) {
+        console.error('Error clearing data:', error);
+        throw error;
+    }
+}
+
+export { init, getPlaylist, getPlaylists, setPlaylist, setPlaylists, clearPlaylists, getTrackAudioFeatures, getTracksAudioFeatures, putTrackAudioFeatures, getArtist, putArtist, getStorageStats, clearAllData }

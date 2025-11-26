@@ -11,6 +11,9 @@ import VpnKeyIcon from '@mui/icons-material/VpnKey';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
 import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
 import FilterListOffIcon from '@mui/icons-material/FilterListOff';
+import StorageIcon from '@mui/icons-material/Storage';
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
+import BarChartIcon from '@mui/icons-material/BarChart';
 
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { icon } from '@fortawesome/fontawesome-svg-core';
@@ -38,6 +41,17 @@ import Fab from '@mui/material/Fab';
 import Link from '@mui/material/Link';
 import Divider from '@mui/material/Divider';
 import LocalBarIcon from '@mui/icons-material/LocalBar';
+import Dialog from '@mui/material/Dialog';
+import DialogTitle from '@mui/material/DialogTitle';
+import DialogContent from '@mui/material/DialogContent';
+import DialogActions from '@mui/material/DialogActions';
+import List from '@mui/material/List';
+import ListItem from '@mui/material/ListItem';
+import ListItemIcon from '@mui/material/ListItemIcon';
+import ListItemText from '@mui/material/ListItemText';
+import ListItemButton from '@mui/material/ListItemButton';
+import LinearProgress from '@mui/material/LinearProgress';
+import Alert from '@mui/material/Alert';
 
 import "json.date-extensions";
 import * as spotify from "./spotify.js";
@@ -911,13 +925,301 @@ function App() {
 
   const TopShell = () => {
     const [drawerState, setDrawerState] = useState(false);
+    const [statsDialogOpen, setStatsDialogOpen] = useState(false);
+    const [storageStats, setStorageStats] = useState(null);
+    const [statsLoading, setStatsLoading] = useState(false);
+    const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
+    const [clearingData, setClearingData] = useState(false);
+    
     function toggleDrawer(state) {
       console.debug(`toggledrawer ${state}`);
       setDrawerState(state);
     }
+    
+    const loadStorageStats = async () => {
+      setStatsLoading(true);
+      try {
+        const stats = await database.getStorageStats();
+        setStorageStats(stats);
+      } catch (error) {
+        console.error('Failed to load storage stats:', error);
+      }
+      setStatsLoading(false);
+    };
+    
+    const handleOpenStats = async () => {
+      setStatsDialogOpen(true);
+      await loadStorageStats();
+    };
+    
+    const handleClearData = async () => {
+      setClearingData(true);
+      try {
+        await database.clearAllData();
+        await loadStorageStats();
+        setClearConfirmOpen(false);
+      } catch (error) {
+        console.error('Failed to clear data:', error);
+      }
+      setClearingData(false);
+    };
+    
+    const formatBytes = (bytes) => {
+      if (!bytes) return 'Unknown';
+      if (bytes < 1024) return bytes + ' B';
+      if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+      return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    };
 
     return (
       <Fragment>
+        {/* Storage Stats Dialog */}
+        <Dialog 
+          open={statsDialogOpen} 
+          onClose={() => setStatsDialogOpen(false)}
+          maxWidth="sm"
+          fullWidth
+          PaperProps={{
+            sx: {
+              backgroundColor: '#1e1e1e',
+              backgroundImage: 'none',
+            }
+          }}
+        >
+          <DialogTitle sx={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            gap: 1,
+            borderBottom: '1px solid rgba(255,255,255,0.1)',
+            color: '#fff',
+            '& .MuiTypography-root': { color: '#fff' }
+          }}>
+            <StorageIcon sx={{ color: '#1DB954' }} />
+            <Typography component="span" sx={{ color: '#fff', fontWeight: 500, fontSize: '1.25rem' }}>
+              Storage Statistics
+            </Typography>
+          </DialogTitle>
+          <DialogContent sx={{ pt: 3 }}>
+            {statsLoading ? (
+              <Box sx={{ textAlign: 'center', py: 4 }}>
+                <CircularProgress size={40} sx={{ color: '#1DB954' }} />
+                <Typography sx={{ mt: 2, color: 'rgba(255,255,255,0.7)' }}>
+                  Loading statistics...
+                </Typography>
+              </Box>
+            ) : storageStats ? (
+              <Stack spacing={3}>
+                {/* Storage Size */}
+                <Box>
+                  <Typography variant="subtitle2" sx={{ color: 'rgba(255,255,255,0.7)', mb: 1 }}>
+                    Storage Usage
+                  </Typography>
+                  <Typography variant="h6" sx={{ color: '#1DB954' }}>
+                    {formatBytes(storageStats.storageSize.estimated)}
+                  </Typography>
+                  {storageStats.storageSize.quota && (
+                    <LinearProgress 
+                      variant="determinate" 
+                      value={(storageStats.storageSize.estimated / storageStats.storageSize.quota) * 100}
+                      sx={{ 
+                        mt: 1, 
+                        backgroundColor: 'rgba(255,255,255,0.1)',
+                        '& .MuiLinearProgress-bar': { backgroundColor: '#1DB954' }
+                      }}
+                    />
+                  )}
+                </Box>
+                
+                <Divider sx={{ borderColor: 'rgba(255,255,255,0.1)' }} />
+                
+                {/* Playlists */}
+                <Box>
+                  <Typography variant="subtitle2" sx={{ color: 'rgba(255,255,255,0.7)', mb: 1 }}>
+                    📋 Playlists Cached
+                  </Typography>
+                  <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
+                    <Box>
+                      <Typography variant="h4" sx={{ fontWeight: 700, color: '#fff' }}>
+                        {storageStats.playlists.count}
+                      </Typography>
+                      <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.7)' }}>
+                        Total Playlists
+                      </Typography>
+                    </Box>
+                    <Box>
+                      <Typography variant="h4" sx={{ fontWeight: 700, color: '#fff' }}>
+                        {storageStats.playlists.totalTracks}
+                      </Typography>
+                      <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.7)' }}>
+                        Total Track Entries
+                      </Typography>
+                    </Box>
+                  </Box>
+                  <Box sx={{ display: 'flex', gap: 2, mt: 1 }}>
+                    <Chip 
+                      size="small" 
+                      label={`${storageStats.playlists.libraryPlaylists} Library`}
+                      sx={{ backgroundColor: 'rgba(29, 185, 84, 0.2)', color: '#1DB954' }}
+                    />
+                    <Chip 
+                      size="small" 
+                      label={`${storageStats.playlists.classPlaylists} Class`}
+                      sx={{ backgroundColor: 'rgba(255, 170, 0, 0.2)', color: '#ffaa00' }}
+                    />
+                  </Box>
+                </Box>
+                
+                <Divider sx={{ borderColor: 'rgba(255,255,255,0.1)' }} />
+                
+                {/* Audio Features */}
+                <Box>
+                  <Typography variant="subtitle2" sx={{ color: 'rgba(255,255,255,0.7)', mb: 1 }}>
+                    🎵 Song Metadata Cached
+                  </Typography>
+                  <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2, mb: 2 }}>
+                    <Box>
+                      <Typography variant="h4" sx={{ fontWeight: 700, color: '#fff' }}>
+                        {storageStats.audioFeatures.count}
+                      </Typography>
+                      <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.7)' }}>
+                        Tracks with Audio Data
+                      </Typography>
+                    </Box>
+                    <Box>
+                      <Typography variant="h4" sx={{ fontWeight: 700, color: '#1DB954' }}>
+                        {storageStats.audioFeatures.withTempo}
+                      </Typography>
+                      <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.7)' }}>
+                        With BPM Data
+                      </Typography>
+                    </Box>
+                  </Box>
+                  
+                  {/* Data Sources */}
+                  <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.7)', display: 'block', mb: 1 }}>
+                    Data Sources:
+                  </Typography>
+                  <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 2 }}>
+                    <Chip 
+                      size="small" 
+                      label={`${storageStats.audioFeatures.spotifySource} from Spotify`}
+                      sx={{ backgroundColor: 'rgba(29, 185, 84, 0.2)', color: '#1DB954' }}
+                    />
+                    <Chip 
+                      size="small" 
+                      label={`${storageStats.audioFeatures.getsongbpmSource} from GetSongBPM`}
+                      sx={{ backgroundColor: 'rgba(77, 208, 225, 0.2)', color: '#4dd0e1' }}
+                    />
+                  </Box>
+                  
+                  {/* Tempo Stats */}
+                  {storageStats.audioFeatures.withTempo > 0 && (
+                    <Box sx={{ mt: 2 }}>
+                      <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.7)', display: 'block', mb: 1 }}>
+                        Tempo Distribution:
+                      </Typography>
+                      <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 2 }}>
+                        <Chip 
+                          size="small" 
+                          label={`${storageStats.audioFeatures.tempoDistribution.slow} Slow (<100)`}
+                          sx={{ backgroundColor: 'rgba(76, 175, 80, 0.2)', color: '#4caf50' }}
+                        />
+                        <Chip 
+                          size="small" 
+                          label={`${storageStats.audioFeatures.tempoDistribution.medium} Medium (100-130)`}
+                          sx={{ backgroundColor: 'rgba(255, 193, 7, 0.2)', color: '#ffc107' }}
+                        />
+                        <Chip 
+                          size="small" 
+                          label={`${storageStats.audioFeatures.tempoDistribution.fast} Fast (130-160)`}
+                          sx={{ backgroundColor: 'rgba(255, 152, 0, 0.2)', color: '#ff9800' }}
+                        />
+                        <Chip 
+                          size="small" 
+                          label={`${storageStats.audioFeatures.tempoDistribution.veryFast} Very Fast (>160)`}
+                          sx={{ backgroundColor: 'rgba(244, 67, 54, 0.2)', color: '#f44336' }}
+                        />
+                      </Box>
+                      <Box sx={{ display: 'flex', gap: 3 }}>
+                        <Box>
+                          <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.7)' }}>
+                            Average: <strong>{storageStats.audioFeatures.avgTempo} BPM</strong>
+                          </Typography>
+                        </Box>
+                        <Box>
+                          <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.7)' }}>
+                            Range: <strong>{Math.round(storageStats.audioFeatures.minTempo)} - {Math.round(storageStats.audioFeatures.maxTempo)} BPM</strong>
+                          </Typography>
+                        </Box>
+                      </Box>
+                    </Box>
+                  )}
+                </Box>
+                
+                <Divider sx={{ borderColor: 'rgba(255,255,255,0.1)' }} />
+                
+                {/* Artists */}
+                <Box>
+                  <Typography variant="subtitle2" sx={{ color: 'rgba(255,255,255,0.7)', mb: 1 }}>
+                    🎤 Artists Cached
+                  </Typography>
+                  <Typography variant="h4" sx={{ fontWeight: 700, color: '#fff' }}>
+                    {storageStats.artists.count}
+                  </Typography>
+                </Box>
+              </Stack>
+            ) : (
+              <Alert severity="error">Failed to load statistics</Alert>
+            )}
+          </DialogContent>
+          <DialogActions sx={{ borderTop: '1px solid rgba(255,255,255,0.1)', px: 3, py: 2 }}>
+            <Button 
+              onClick={() => setClearConfirmOpen(true)}
+              color="error"
+              startIcon={<DeleteOutlineIcon />}
+              disabled={statsLoading}
+            >
+              Clear All Data
+            </Button>
+            <Button onClick={() => setStatsDialogOpen(false)} sx={{ color: '#1DB954' }}>
+              Close
+            </Button>
+          </DialogActions>
+        </Dialog>
+        
+        {/* Clear Data Confirmation Dialog */}
+        <Dialog
+          open={clearConfirmOpen}
+          onClose={() => setClearConfirmOpen(false)}
+          PaperProps={{
+            sx: {
+              backgroundColor: '#1e1e1e',
+              backgroundImage: 'none',
+            }
+          }}
+        >
+          <DialogTitle>Clear All Cached Data?</DialogTitle>
+          <DialogContent>
+            <Typography sx={{ color: 'rgba(255,255,255,0.7)' }}>
+              This will delete all locally cached playlists, audio features, and artist data. 
+              You will need to refresh data from Spotify after clearing.
+            </Typography>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setClearConfirmOpen(false)} disabled={clearingData}>
+              Cancel
+            </Button>
+            <Button 
+              onClick={handleClearData} 
+              color="error" 
+              variant="contained"
+              disabled={clearingData}
+            >
+              {clearingData ? 'Clearing...' : 'Clear All Data'}
+            </Button>
+          </DialogActions>
+        </Dialog>
+        
         <Drawer anchor={"left"} open={drawerState} onClose={() => toggleDrawer(false)}>
           <Box sx={{ width: 300, p: 3, height: '100%', display: 'flex', flexDirection: 'column' }}>
             <Typography variant="h5" sx={{ mb: 3, fontWeight: 700, color: '#1DB954' }}>
@@ -925,9 +1227,20 @@ function App() {
             </Typography>
             
             <Box sx={{ flexGrow: 1 }}>
-              <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.7)', mb: 2 }}>
-                More features coming soon...
-              </Typography>
+              <List>
+                <ListItem disablePadding>
+                  <ListItemButton onClick={handleOpenStats}>
+                    <ListItemIcon>
+                      <BarChartIcon sx={{ color: '#1DB954' }} />
+                    </ListItemIcon>
+                    <ListItemText 
+                      primary="Storage Stats" 
+                      secondary="View cached data & BPM statistics"
+                      secondaryTypographyProps={{ sx: { color: 'rgba(255,255,255,0.5)', fontSize: '0.75rem' }}}
+                    />
+                  </ListItemButton>
+                </ListItem>
+              </List>
             </Box>
             
             <Divider sx={{ my: 2, borderColor: 'rgba(255,255,255,0.1)' }} />
