@@ -17,7 +17,6 @@ html, body, #root {
   margin: 0;
   padding: 0;
   height: 100%;
-  overflow: hidden;
   background: linear-gradient(180deg, var(--spotify-dark-gray) 0%, var(--spotify-black) 100%);
   color: var(--spotify-white);
 }
@@ -32,11 +31,8 @@ body {
 
 .App {
   width: 100%;
-  height: 100vh;
-  display: flex;
-  flex-direction: column;
+  min-height: 100vh;
   background: transparent;
-  overflow: hidden;
 }
 
 .TrackTable {
@@ -52,34 +48,9 @@ body {
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4) !important;
 }
 
-.MuiTableContainer-root {
-  background-color: transparent !important;
-}
-
-table {
-  background-color: transparent !important;
-}
-
-tbody {
-  background-color: transparent !important;
-}
-
-/* Hide or style Material React Table toolbars and UI elements */
-.MuiBox-root[class*="Toolbar"],
-.Mui-ToolbarDropZone {
-  background-color: transparent !important;
-  display: none !important;
-}
-
-/* Fix any white boxes in the table container */
-.MuiPaper-root .MuiBox-root {
-  background-color: transparent !important;
-}
-
 .MuiTableCell-root {
   color: var(--spotify-white) !important;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05) !important;
-  padding: 12px 16px !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1) !important;
 }
 
 .MuiTableCell-head {
@@ -90,39 +61,9 @@ tbody {
   font-size: 0.75rem !important;
 }
 
-/* Hide placeholder text in filter inputs */
-.MuiTableCell-head input::placeholder,
-.MuiTableCell-head .MuiSelect-select::placeholder {
-  opacity: 0 !important;
-  color: transparent !important;
-}
-
-/* Ensure clear filter buttons are visible */
-.MuiTableCell-head .MuiIconButton-root {
-  padding: 4px !important;
-  color: rgba(255, 255, 255, 0.7) !important;
-}
-
-.MuiTableCell-head .MuiIconButton-root:hover {
-  color: var(--spotify-green) !important;
-  background-color: rgba(29, 185, 84, 0.1) !important;
-}
-
-.MuiTableRow-root {
-  background-color: rgba(40, 40, 40, 0.3) !important;
-}
-
 .MuiTableRow-root:hover {
-  background-color: rgba(29, 185, 84, 0.15) !important;
+  background-color: rgba(29, 185, 84, 0.1) !important;
   transition: background-color 0.2s ease;
-}
-
-.MuiTableBody-root .MuiTableRow-root:nth-of-type(even) {
-  background-color: rgba(255, 255, 255, 0.05) !important;
-}
-
-.MuiTableBody-root .MuiTableRow-root:nth-of-type(odd) {
-  background-color: rgba(0, 0, 0, 0.2) !important;
 }
 
 .MuiTextField-root {
@@ -158,14 +99,6 @@ tbody {
   background-color: rgba(29, 185, 84, 0.2) !important;
 }
 
-/* Reduce backdrop darkness for dropdowns/modals */
-.MuiBackdrop-root.MuiBackdrop-invisible,
-.MuiBackdrop-root.MuiModal-backdrop,
-div[class*="MuiBackdrop-root"] {
-  background-color: rgba(0, 0, 0, 0.3) !important;
-  opacity: 1 !important;
-}
-
 .MuiIconButton-root {
   color: var(--spotify-white) !important;
   transition: all 0.2s ease !important;
@@ -179,11 +112,7 @@ div[class*="MuiBackdrop-root"] {
 .MuiBadge-badge {
   background-color: var(--spotify-green) !important;
   color: var(--spotify-black) !important;
-  font-weight: 700 !important;
-  font-size: 0.75rem !important;
-  min-width: 20px !important;
-  height: 20px !important;
-  padding: 0 6px !important;
+  font-weight: 600;
 }
 
 .MuiFab-root {
@@ -199,11 +128,8 @@ div[class*="MuiBackdrop-root"] {
 
 .MainContent {
   width: 100%;
-  padding: 8px 16px 16px 16px;
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
+  padding: 16px;
+  padding-top: 80px;
 }
 
 .Loader {
@@ -229,51 +155,6 @@ div[class*="MuiBackdrop-root"] {
   font-weight: 600 !important;
   padding: 12px 32px !important;
   transition: all 0.3s ease !important;
-}
-
-/* Fix click-to-copy buttons in table cells */
-.MuiTableCell-root .MuiButton-root {
-  padding: 4px 8px !important;
-  min-width: auto !important;
-  border-radius: 4px !important;
-  font-weight: 500 !important;
-  justify-content: flex-start !important;
-  text-align: left !important;
-}
-
-.MuiTableCell-root .MuiButton-root:hover {
-  background-color: rgba(29, 185, 84, 0.1) !important;
-}
-
-/* Search highlighting in table cells */
-.MuiTableCell-root mark,
-.MuiTableBody-root mark {
-  background-color: rgba(29, 185, 84, 0.4) !important;
-  color: #ffffff !important;
-  padding: 2px 0 !important;
-  font-weight: 600 !important;
-  border-radius: 2px;
-}
-
-/* Fix filter chip text color */
-.MuiChip-root,
-.MuiChip-label {
-  color: #ffffff !important;
-  background-color: rgba(29, 185, 84, 0.3) !important;
-}
-
-.MuiChip-deleteIcon {
-  color: rgba(255, 255, 255, 0.7) !important;
-}
-
-.MuiChip-deleteIcon:hover {
-  color: #ffffff !important;
-}
-
-/* Fix multi-select filter display */
-.MuiSelect-select span,
-.MuiInputBase-input span {
-  color: #ffffff !important;
 }
 
 .MuiButton-contained:hover {
