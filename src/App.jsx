@@ -2,6 +2,7 @@ import "./styles.css";
 import React, { useState, useEffect, useMemo, Fragment } from "react";
 import { MaterialReactTable } from 'material-react-table';
 import SpotifyPlayer from "react-spotify-web-playback";
+import { ThemeProvider, createTheme } from '@mui/material/styles';
 
 import PlayCircleFilledIcon from '@mui/icons-material/PlayCircleFilled';
 import RefreshIcon from '@mui/icons-material/Refresh';
@@ -12,7 +13,7 @@ import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
 import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
 
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { icon } from '@fortawesome/fontawesome-svg-core';
+import { faSpotify } from '@fortawesome/free-brands-svg-icons';
 
 import AppBar from "@mui/material/AppBar";
 import Toolbar from '@mui/material/Toolbar';
@@ -36,6 +37,37 @@ import Fab from '@mui/material/Fab';
 import "json.date-extensions";
 import * as spotify from "./spotify.js";
 import * as database from "./database.js";
+import * as getsongbpm from "./getsongbpm.js";
+
+// Create a dark theme for Material-UI
+const darkTheme = createTheme({
+  palette: {
+    mode: 'dark',
+    primary: {
+      main: '#1DB954',
+    },
+    secondary: {
+      main: '#1ed760',
+    },
+    background: {
+      default: '#121212',
+      paper: '#282828',
+    },
+    text: {
+      primary: '#FFFFFF',
+      secondary: 'rgba(255, 255, 255, 0.7)',
+    },
+  },
+  components: {
+    MuiPaper: {
+      styleOverrides: {
+        root: {
+          backgroundImage: 'none',
+        },
+      },
+    },
+  },
+});
 
 function App() {
   // #region React hooks
@@ -227,8 +259,10 @@ function App() {
     if (retrieveTrackIds.length > 0) {
       const retrievedTracksAudioFeatures = await retrieveTracksAudioFeatures(retrieveTrackIds);
       for (const trackAudioFeatures of retrievedTracksAudioFeatures) {
-        database.putTrackAudioFeatures(trackAudioFeatures);
-        audioFeaturesMap.set(trackAudioFeatures.id, trackAudioFeatures);
+        if (trackAudioFeatures && trackAudioFeatures.id) {
+          database.putTrackAudioFeatures(trackAudioFeatures);
+          audioFeaturesMap.set(trackAudioFeatures.id, trackAudioFeatures);
+        }
       }
     }
     return audioFeaturesMap;
@@ -244,7 +278,8 @@ function App() {
       try {
         const getResult = await spotifyApi.getAudioFeaturesForTracks(batch);
         if (getResult.audio_features && getResult.audio_features.length > 0) {
-          tracks.push(...getResult.audio_features);
+          // Filter out null/undefined values from Spotify API response
+          tracks.push(...getResult.audio_features.filter(feature => feature !== null && feature !== undefined));
         } else {
           console.error(`Error retrieving tracks for ${trackIds}`);
           console.error(getResult);
@@ -312,8 +347,8 @@ function App() {
       }
     }
 
-    //Add track audio details
-    const tracksAudioDetails = await getTracksAudioFeatures(trackList.map(track => track.id));
+    //Add track audio details from GetSongBPM
+    const tracksAudioDetails = await getsongbpm.getAudioFeaturesForTracks(trackList);
     for (const track of trackList) {
       track.audio_features = tracksAudioDetails.get(track.id);
     }
@@ -504,7 +539,7 @@ function App() {
         )
       },
       {
-        accessorKey: "audio_features.tempo",
+        accessorFn: (row) => row.audio_features?.tempo,
         header: "Tempo",
         size: 20,
         Cell: ({ cell }) => (
@@ -514,7 +549,7 @@ function App() {
         )
       },
       {
-        accessorKey: "audio_features.energy",
+        accessorFn: (row) => row.audio_features?.energy,
         header: "Energy",
         size: 20,
         Cell: ({ cell }) => (
@@ -820,8 +855,9 @@ function App() {
   // #endregion
 
   return (
-    <Fragment component="main">
-      <CssBaseline />
+    <ThemeProvider theme={darkTheme}>
+      <Box component="main">
+        <CssBaseline />
 
       <Stack className="App" spacing={1}>
         {console.debug("Render")}
@@ -850,7 +886,7 @@ function App() {
             <Box className="auth-container">
               <Box sx={{ textAlign: 'center' }}>
                 <div className="auth-logo">
-                  <FontAwesomeIcon icon={icon({ name: 'spotify', style: 'brands' })} />
+                  <FontAwesomeIcon icon={faSpotify} />
                 </div>
                 <h1 className="auth-title">Playlist Planner</h1>
                 <p className="auth-subtitle">Your ultimate tool for managing Spotify playlists</p>
@@ -873,7 +909,7 @@ function App() {
                   transition: 'all 0.3s ease'
                 }} 
                 variant="contained" 
-                startIcon={<FontAwesomeIcon fontSize="inherit" icon={icon({ name: 'spotify', style: 'brands' })} />} 
+                startIcon={<FontAwesomeIcon fontSize="inherit" icon={faSpotify} />} 
                 onClick={spotify.authorizeSpotify}
               >
                 Connect to Spotify
@@ -881,7 +917,8 @@ function App() {
             </Box>
           )}
       </Stack>
-    </Fragment>
+      </Box>
+    </ThemeProvider>
   );
 }
 

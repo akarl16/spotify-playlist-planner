@@ -40,30 +40,58 @@ body {
   background: transparent;
 }
 
+/* Ensure MaterialReactTable container is dark */
+.MRT-root,
+[class*="MRT"],
+.MaterialReactTable {
+  background-color: transparent !important;
+  color: var(--spotify-white) !important;
+}
+
+/* Table container background */
+.MuiTableContainer-root {
+  background-color: transparent !important;
+}
+
 /* Material React Table styling overrides */
-.MuiPaper-root {
-  background-color: rgba(40, 40, 40, 0.6) !important;
-  backdrop-filter: blur(10px);
+.MuiPaper-root,
+.MuiPaper-root.MuiPaper-elevation,
+.MuiPaper-root.MuiPaper-rounded {
+  background-color: rgba(40, 40, 40, 0.8) !important;
+  backdrop-filter: blur(10px) !important;
   border-radius: 12px !important;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4) !important;
+}
+
+.MuiTable-root {
+  background-color: transparent !important;
 }
 
 .MuiTableCell-root {
   color: var(--spotify-white) !important;
   border-bottom: 1px solid rgba(255, 255, 255, 0.1) !important;
+  background-color: transparent !important;
 }
 
 .MuiTableCell-head {
-  background-color: rgba(25, 20, 20, 0.8) !important;
+  background-color: rgba(25, 20, 20, 0.9) !important;
   font-weight: 600 !important;
   text-transform: uppercase;
   letter-spacing: 0.5px;
   font-size: 0.75rem !important;
 }
 
+.MuiTableRow-root {
+  background-color: transparent !important;
+}
+
 .MuiTableRow-root:hover {
-  background-color: rgba(29, 185, 84, 0.1) !important;
+  background-color: rgba(29, 185, 84, 0.15) !important;
   transition: background-color 0.2s ease;
+}
+
+.MuiTableBody-root .MuiTableRow-root {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05) !important;
 }
 
 .MuiTextField-root {
@@ -71,8 +99,14 @@ body {
   border-radius: 8px;
 }
 
+.MuiTextField-root input,
+.MuiTextField-root textarea {
+  color: var(--spotify-white) !important;
+}
+
 .MuiInputBase-root {
   color: var(--spotify-white) !important;
+  background-color: rgba(40, 40, 40, 0.6) !important;
 }
 
 .MuiInputLabel-root {
@@ -85,6 +119,12 @@ body {
 
 .MuiOutlinedInput-root:hover .MuiOutlinedInput-notchedOutline {
   border-color: var(--spotify-green) !important;
+}
+
+/* Filter inputs in table */
+.MuiTableHead-root .MuiTextField-root,
+.MuiTableHead-root .MuiInputBase-root {
+  background-color: rgba(25, 20, 20, 0.8) !important;
 }
 
 .MuiAutocomplete-listbox {
@@ -129,7 +169,7 @@ body {
 .MainContent {
   width: 100%;
   padding: 16px;
-  padding-top: 80px;
+  padding-top: 8px;
 }
 
 .Loader {
