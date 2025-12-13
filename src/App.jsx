@@ -37,7 +37,6 @@ import Fab from '@mui/material/Fab';
 import "json.date-extensions";
 import * as spotify from "./spotify.js";
 import * as database from "./database.js";
-import * as getsongbpm from "./getsongbpm.js";
 
 // Create a dark theme for Material-UI
 const darkTheme = createTheme({
@@ -347,11 +346,11 @@ function App() {
       }
     }
 
-    //Add track audio details from GetSongBPM
-    const tracksAudioDetails = await getsongbpm.getAudioFeaturesForTracks(trackList);
-    for (const track of trackList) {
-      track.audio_features = tracksAudioDetails.get(track.id);
-    }
+    //Add track audio details - DISABLED
+    // const tracksAudioDetails = await getTracksAudioFeatures(trackList.map(track => track.id));
+    // for (const track of trackList) {
+    //   track.audio_features = tracksAudioDetails.get(track.id);
+    // }
 
     trackList.sort(
       (a, b) => (a.recencyScore - b.recencyScore || b.added_at - a.added_at)
@@ -538,29 +537,30 @@ function App() {
           </Box>
         )
       },
-      {
-        accessorFn: (row) => row.audio_features?.tempo,
-        header: "Tempo",
-        size: 20,
-        Cell: ({ cell }) => (
-          <Box sx={{ fontWeight: 600, color: '#1DB954' }}>
-            {cell.getValue() ? Math.round(cell.getValue()) : '-'}
-          </Box>
-        )
-      },
-      {
-        accessorFn: (row) => row.audio_features?.energy,
-        header: "Energy",
-        size: 20,
-        Cell: ({ cell }) => (
-          <Box sx={{ 
-            fontWeight: 600,
-            color: cell.getValue() > 0.7 ? '#ff4444' : cell.getValue() > 0.4 ? '#ffaa00' : '#1DB954'
-          }}>
-            {cell.getValue() ? (cell.getValue() * 100).toFixed(0) + '%' : '-'}
-          </Box>
-        )
-      },
+      // Audio features disabled
+      // {
+      //   accessorFn: (row) => row.audio_features?.tempo,
+      //   header: "Tempo",
+      //   size: 20,
+      //   Cell: ({ cell }) => (
+      //     <Box sx={{ fontWeight: 600, color: '#1DB954' }}>
+      //       {cell.getValue() ? Math.round(cell.getValue()) : '-'}
+      //     </Box>
+      //   )
+      // },
+      // {
+      //   accessorFn: (row) => row.audio_features?.energy,
+      //   header: "Energy",
+      //   size: 20,
+      //   Cell: ({ cell }) => (
+      //     <Box sx={{ 
+      //       fontWeight: 600,
+      //       color: cell.getValue() > 0.7 ? '#ff4444' : cell.getValue() > 0.4 ? '#ffaa00' : '#1DB954'
+      //     }}>
+      //       {cell.getValue() ? (cell.getValue() * 100).toFixed(0) + '%' : '-'}
+      //     </Box>
+      //   )
+      // },
       {
 
         accessorFn: (row) => row.plays,
