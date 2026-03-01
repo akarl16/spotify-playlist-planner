@@ -210,10 +210,9 @@ function App() {
     var more = true;
     var offset = 0;
 
-    const spotifyApi = await spotify.getSpotifyApi();
     while (more) {
       try {
-        const tracksResult = await spotifyApi.getPlaylistTracks(_playlistId, {
+        const tracksResult = await spotify.getPlaylistItems(_playlistId, {
           limit: 50,
           offset: offset
         });
@@ -235,11 +234,11 @@ function App() {
     }
     return tracks.map((entry) => {
       return {
-        id: entry.track.id,
+        id: entry.item.id,
         added_at: new Date(entry.added_at),
-        name: entry.track.name,
-        artists: entry.track.artists,
-        duration_ms: entry.track.duration_ms
+        name: entry.item.name,
+        artists: entry.item.artists,
+        duration_ms: entry.item.duration_ms
       };
     });
   };
@@ -430,8 +429,7 @@ function App() {
     const duration_string = "0:" + millisToMinutesAndSeconds(track.duration_ms);
     navigator.clipboard.writeText(`${track.name}\t${duration_string}`);
 
-    const spotifyApi = await spotify.getSpotifyApi();
-    await spotifyApi.addTracksToPlaylist(playlistToPlan.id, [`spotify:track:${trackId}`]);
+    await spotify.addItemsToPlaylist(playlistToPlan.id, [`spotify:track:${trackId}`]);
   };
 
   const addPlaylist = async () => {

@@ -68,7 +68,7 @@ function getAuthorizationCodeFromUrl() {
 async function retrieveAccessTokenFromAuth(authorization_code) {
     console.debug("retrieveAccessTokenFromAuth");
     let codeVerifier = localStorage.getItem('code_verifier');
-    let redirect_url = window.location.href.replace(/\?$/,'');
+    let redirect_url = 'http://127.0.0.1:3000/spotify-playlist-planner';
 
     let body = new URLSearchParams({
         grant_type: 'authorization_code',
@@ -132,7 +132,7 @@ function authorizeSpotify() {
     generateCodeChallenge(codeVerifier).then(codeChallenge => {
         let state = generateRandomString(16);
         localStorage.setItem('code_verifier', codeVerifier);
-        let redirect_url = window.location.href.replace(/\?$/,'');
+        let redirect_url = 'http://127.0.0.1:3000/spotify-playlist-planner';
 
         let args = new URLSearchParams({
             response_type: 'code',
@@ -189,7 +189,72 @@ function getAccessToken() {
     return access_token;
 }
 
+/**
+ * Get playlist tracks using the updated Feb 2026 API endpoint.
+ * Replaces the deprecated spotifyApi.getPlaylistTracks() which uses /tracks
+ * @param playlistId - The Spotify playlist ID
+ * @param options - Object with limit and offset properties
+ * @returns Promise with items array and pagination info
+ */
+async function getPlaylistItems(playlistId, options = {}) {
+    const { limit = 50, offset = 0 } = options;
+    const token = getAccessToken();
+    
+    if (!token) {
+        throw new Error('No access token available');
+    }
+    
+    const url = `https://api.spotify.com/v1/playlists/${playlistId}/items?limit=${limit}&offset=${offset}`;
+    
+    const response = await fetch(url, {
+        headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+        }
+    });
+    
+    if (!response.ok) {
+        throw new Error(`Spotify API error: ${response.status} ${response.statusText}`);
+    }
+    
+    return await response.json();
+}
+
+/**
+ * Add tracks to playlist using the updated Feb 2026 API endpoint.
+ * Replaces the deprecated spotifyApi.addTracksToPlaylist() which uses /tracks
+ * @param playlistId - The Spotify playlist ID
+ * @param uris - Array of Spotify track URIs
+ * @returns Promise with response data
+ */
+async function addItemsToPlaylist(playlistId, uris) {
+    const token = getAccessToken();
+    
+    if (!token) {
+        throw new Error('No access token available');
+    }
+    
+    const url = `https://api.spotify.com/v1/playlists/${playlistId}/items`;
+    
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            uris: uris
+        })
+    });
+    
+    if (!response.ok) {
+        throw new Error(`Spotify API error: ${response.status} ${response.statusText}`);
+    }
+    
+    return await response.json();
+}
+
 const clientId = "c4145d13614447e9b3bcd287499086f4";
 const spotifyApi = new SpotifyWebApi();
 
-export { isAuthorized, authorizeSpotify, getSpotifyApi, getAccessToken }
+export { isAuthorized, authorizeSpotify, getSpotifyApi, getAccessToken, getPlaylistItems, addItemsToPlaylist }
