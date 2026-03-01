@@ -85,6 +85,7 @@ function App() {
     loadMessage: ""
   });
   const [isPlaying, setIsPlaying] = useState(false);
+  // eslint-disable-next-line no-unused-vars
   const [playTrackUri, setPlayTrackUri] = useState([]);
   // const scrollTrigger = useScrollTrigger({
   //   disableHysteresis: true,
@@ -113,6 +114,7 @@ function App() {
     if (isSpotifyAuthorized) {
       fetchData();
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSpotifyAuthorized])
 
   // #endregion
@@ -243,6 +245,7 @@ function App() {
     });
   };
 
+  // eslint-disable-next-line no-unused-vars
   const getTracksAudioFeatures = async (trackIds) => {
     const audioFeaturesMap = new Map();
     const retrieveTrackIds = [];
@@ -626,6 +629,7 @@ function App() {
         )
       }
     ],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [libraryPlaylists]
   );
 
@@ -824,6 +828,7 @@ function App() {
     );
   }
 
+  // eslint-disable-next-line no-unused-vars
   const BottomShell = () => {
     const [drawerState, setDrawerState] = useState(false);
     function toggleDrawer(state) {
