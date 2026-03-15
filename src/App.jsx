@@ -75,7 +75,7 @@ function App() {
   const [classPlaylists, setClassPlaylists] = useState([]);
   const [isSpotifyAuthorized, setIsSpotifyAuthorized] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  let [playlistToPlan, setPlaylistToPlan] = useState();
+  const [playlistToPlan, setPlaylistToPlan] = useState();
   const [loadState, setLoadState] = useState({
     playlistHeaderCount: 0,
     playlistHeaderTotal: 0,
@@ -785,10 +785,9 @@ function App() {
             }}
             options={classPlaylists}
             autoHighlight
+            value={playlistToPlan ?? null}
             onChange={(_event, newValue) => {
               setPlaylistToPlan(newValue);
-              playlistToPlan = newValue; //Redundant but necessary since the state won't update until re-render
-              console.log("playlistToPlan", playlistToPlan);
             }}
             getOptionLabel={(option) => option.name}
             renderInput={(params) => (
