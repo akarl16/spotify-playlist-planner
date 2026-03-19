@@ -4,10 +4,10 @@
       "cpus": 4
     },
     "waitFor": "onCreateCommand",
-    "updateContentCommand": "npm install",
+    "updateContentCommand": "bun install",
     "postCreateCommand": "",
     "postAttachCommand": {
-      "server": "npm start"
+      "server": "bun start"
     },
     "customizations": {
       "codespaces": {

@@ -15,17 +15,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
 
       - name: Install dependencies
-        run: npm ci
+        run: bun install
 
       - name: Build
-        run: CI=false npm run build
+        run: CI=false bun run build
         env:
           REACT_APP_GETSONGBPM_API_KEY: ${{ secrets.GETSONGBPM_API_KEY }}
 
