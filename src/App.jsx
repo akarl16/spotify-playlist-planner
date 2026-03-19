@@ -629,8 +629,7 @@ function App() {
         )
       }
     ],
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [libraryPlaylists]
+    [libraryPlaylists, playlistToPlan]
   );
 
   const Tracks = (props) => {
