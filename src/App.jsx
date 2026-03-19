@@ -1,5 +1,5 @@
 import "./styles.css";
-import React, { useState, useEffect, useMemo, Fragment } from "react";
+import React, { useState, useEffect, useMemo, useCallback, Fragment } from "react";
 import { MaterialReactTable } from 'material-react-table';
 import SpotifyPlayer from "react-spotify-web-playback";
 import { ThemeProvider, createTheme } from '@mui/material/styles';
@@ -425,7 +425,7 @@ function App() {
     // setIsPlaying(true);
   };
 
-  const addTrack = async (trackId) => {
+  const addTrack = useCallback(async (trackId) => {
     console.debug(`ADDING TRACK ${trackId} TO PLAYLIST ${playlistToPlan.name}`);
 
     const track = trackLibrary.find((track) => track.id === trackId);
@@ -433,7 +433,7 @@ function App() {
     navigator.clipboard.writeText(`${track.name}\t${duration_string}`);
 
     await spotify.addItemsToPlaylist(playlistToPlan.id, [`spotify:track:${trackId}`]);
-  };
+  }, [playlistToPlan, trackLibrary]);
 
   const addPlaylist = async () => {
     const date = new Date();
@@ -629,7 +629,7 @@ function App() {
         )
       }
     ],
-    [libraryPlaylists, playlistToPlan]
+    [libraryPlaylists, addTrack]
   );
 
   const Tracks = (props) => {
