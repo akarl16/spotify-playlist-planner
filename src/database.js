@@ -52,8 +52,10 @@ async function setPlaylistNoOverwrite(playlist, store) {
         console.debug(`new playlist ${playlist.id} added to store`);
         await store.put(playlist);
     } else if (existingPlaylist.snapshot_id !== playlist.snapshot_id) {
-        console.debug(`updated playlist ${playlist.id} based on snapshot`);
-        await store.put(playlist);
+        console.debug(`updated playlist ${playlist.id} based on snapshot, clearing cached trackList`);
+        // Drop the stale trackList so getPlaylistTracks re-fetches from Spotify
+        const updated = { ...playlist, trackList: undefined };
+        await store.put(updated);
     } else {
         console.debug(`playlist ${playlist.id} already stored`);
     }

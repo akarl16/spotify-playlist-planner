@@ -234,15 +234,17 @@ function App() {
         }
       }
     }
-    return tracks.map((entry) => {
-      return {
-        id: entry.item.id,
-        added_at: new Date(entry.added_at),
-        name: entry.item.name,
-        artists: entry.item.artists,
-        duration_ms: entry.item.duration_ms
-      };
-    });
+    return tracks
+      .filter((entry) => entry?.item?.id != null)  // skip nulls (unavailable tracks, local files, episodes)
+      .map((entry) => {
+        return {
+          id: entry.item.id,
+          added_at: new Date(entry.added_at),
+          name: entry.item.name,
+          artists: entry.item.artists,
+          duration_ms: entry.item.duration_ms
+        };
+      });
   };
 
   // eslint-disable-next-line no-unused-vars
@@ -320,14 +322,23 @@ function App() {
     const trackList = Array.from(trackMap.values());
 
     //Calculate recency score
-    for (const track of trackList) {
-      for (const classPlaylist of classPlaylists) {
-        const playlistTracks = classPlaylist.trackList.filter(
-          (playlistTrack) => playlistTrack.id === track.id
-        );
-        for (const playlistTrack of playlistTracks) {
+    const _dateRegex = /([12]\d{3}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01]))/;
+    
+    for (const classPlaylist of classPlaylists) {
+      const classDateMatch = _dateRegex.exec(classPlaylist.name);
+      const playlistDate = classDateMatch ? new Date(classDateMatch[1]).getTime() : null;
+
+      for (const playlistTrack of classPlaylist.trackList) {
+        if (trackMap.has(playlistTrack.id)) {
+          const track = trackMap.get(playlistTrack.id);
           track.plays.push(playlistTrack);
-          const playDate = playlistTrack.added_at.getTime();
+          
+          const playDate = playlistDate || playlistTrack.added_at.getTime();
+          if (playlistDate) {
+            // override the added_at so the UI shows the real class date as the played date
+            playlistTrack.added_at = new Date(playlistDate);
+          }
+
           if (playDate > todayMinus7) {
             track.recencyScore += 10;
             playlistTrack.recencyScore = 10;
@@ -497,10 +508,12 @@ function App() {
         enableClickToCopy: true,
         enableColumnActions: false,
         maxSize: 200,
-        Cell: ({ cell }) => (
-          <Box sx={{ fontWeight: 500 }}>
-            {cell.getValue()}
-          </Box>
+        Cell: ({ cell, row }) => (
+          <Tooltip title={`Spotify ID: ${row.original.id}`} placement="top">
+            <Box sx={{ fontWeight: 500 }}>
+              {cell.getValue()}
+            </Box>
+          </Tooltip>
         )
       },
       {
