@@ -99,6 +99,8 @@ async function retrieveAccessTokenFromAuth(authorization_code) {
     return data.access_token;
 }
 
+// Returns a fresh access token, or null if the refresh could not complete.
+// On null, the caller must fall through to the sign-in flow.
 async function retrieveAccessTokenFromRefresh(refresh_token) {
     console.debug("retrieveAccessTokenFromRefresh");
     let body = new URLSearchParams({
@@ -107,17 +109,43 @@ async function retrieveAccessTokenFromRefresh(refresh_token) {
         client_id: clientId,
     });
 
-    const response = await fetch('https://accounts.spotify.com/api/token', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/x-www-form-urlencoded'
-        },
-        body: body
-    });
+    let response;
+    try {
+        response = await fetch('https://accounts.spotify.com/api/token', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: body
+        });
+    } catch (err) {
+        // Network error — keep the token so a transient blip doesn't force re-login.
+        console.error('Token refresh request failed (network):', err);
+        return null;
+    }
 
     if (!response.ok) {
-        throw new Error('HTTP status ' + response.status);
+        // Since July 20, 2026 Spotify refresh tokens expire after six months, and a
+        // revoked/expired token returns 400 invalid_grant. Per Spotify guidance:
+        // discard the stored token (do NOT retry it) and re-run the sign-in flow.
+        let errorBody = {};
+        try {
+            errorBody = await response.json();
+        } catch {
+            // non-JSON error body; fall through to status check below
+        }
+
+        if (response.status === 400 || errorBody.error === 'invalid_grant') {
+            console.warn('Refresh token expired or revoked — discarding stored token; re-authorization required.');
+            localStorage.removeItem('refresh_token');
+            localStorage.removeItem('access_token');
+        } else {
+            // Transient failure (e.g. 5xx / 429). Keep the token; just fail this attempt.
+            console.error('Token refresh failed (transient):', response.status);
+        }
+        return null;
     }
+
     const data = await response.json();
 
     setWithExpiry('access_token', data.access_token, data.expires_in * 1000);
@@ -164,10 +192,15 @@ async function isAuthorized() {
         let refresh_token = localStorage.getItem("refresh_token");
         if(refresh_token) {
             access_token = await retrieveAccessTokenFromRefresh(refresh_token);
-            spotifyApi.setAccessToken(access_token);
-            return true;
+            if (access_token) {
+                spotifyApi.setAccessToken(access_token);
+                return true;
+            }
+            // Refresh failed (e.g. token expired/revoked and was discarded).
+            // Fall through to the authorization-code flow or the Connect button.
+            console.debug("Refresh failed; re-authorization required");
         }
-        else if(authorization_code) {
+        if(authorization_code) {
             access_token = await retrieveAccessTokenFromAuth(authorization_code);
             spotifyApi.setAccessToken(access_token);
             return true;
