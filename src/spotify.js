@@ -59,6 +59,18 @@ async function generateCodeChallenge(codeVerifier) {
     return base64encode(digest);
 }
 
+// The redirect URI must be identical in the authorize call and the token
+// exchange, and must exactly match (including trailing slash) a URI
+// registered in the Spotify app settings. Registered URIs:
+//   https://spotify-playlist-planner-liard.vercel.app/
+//   https://akarl16.github.io/spotify-playlist-planner/
+//   http://127.0.0.1:3000/spotify-playlist-planner
+// The app has no client-side routes, so origin + pathname of the page the
+// user is on matches the registered entry for each environment.
+function getRedirectUrl() {
+    return window.location.origin + window.location.pathname;
+}
+
 function getAuthorizationCodeFromUrl() {
     const urlParams = new URLSearchParams(window.location.search);
     let code = urlParams.get('code');
@@ -68,7 +80,7 @@ function getAuthorizationCodeFromUrl() {
 async function retrieveAccessTokenFromAuth(authorization_code) {
     console.debug("retrieveAccessTokenFromAuth");
     let codeVerifier = localStorage.getItem('code_verifier');
-    let redirect_url = 'http://127.0.0.1:3000/spotify-playlist-planner';
+    let redirect_url = getRedirectUrl();
 
     let body = new URLSearchParams({
         grant_type: 'authorization_code',
@@ -160,7 +172,7 @@ function authorizeSpotify() {
     generateCodeChallenge(codeVerifier).then(codeChallenge => {
         let state = generateRandomString(16);
         localStorage.setItem('code_verifier', codeVerifier);
-        let redirect_url = 'http://127.0.0.1:3000/spotify-playlist-planner';
+        let redirect_url = getRedirectUrl();
 
         let args = new URLSearchParams({
             response_type: 'code',
@@ -181,7 +193,10 @@ async function isAuthorized() {
     if (authorization_code) {
         console.debug("Authorization code found in URL");
         localStorage.setItem('authorization_code', authorization_code);
-        window.location.search = "";
+        // Strip the query without reloading: a reload here races the token
+        // exchange below, and the reload's second exchange attempt fails
+        // because the authorization code is single-use.
+        window.history.replaceState({}, '', window.location.pathname);
     }
     authorization_code = localStorage.getItem('authorization_code');
 
