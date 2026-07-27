@@ -29,3 +29,28 @@ test('Date objects survive an IndexedDB round trip', async () => {
     expect(stored.added_at.toISOString()).toBe('2026-01-15T00:00:00.000Z');
     db.close();
 });
+
+test('Map survives structuredClone as a Map, not a plain object', () => {
+    const cloned = structuredClone({ m: new Map([['a', 1]]) });
+
+    expect(cloned.m).toBeInstanceOf(Map);
+    expect(cloned.m.get('a')).toBe(1);
+});
+
+test('Set survives structuredClone as a Set, not a plain object', () => {
+    const cloned = structuredClone({ s: new Set([1, 2]) });
+
+    expect(cloned.s).toBeInstanceOf(Set);
+    expect(cloned.s.has(2)).toBe(true);
+});
+
+test('nested and arrayed Dates are all re-wrapped in the test realm', () => {
+    const cloned = structuredClone({
+        nested: { at: new Date('2026-03-01T00:00:00Z') },
+        list: [{ at: new Date('2026-04-01T00:00:00Z') }]
+    });
+
+    expect(cloned.nested.at).toBeInstanceOf(Date);
+    expect(cloned.list[0].at).toBeInstanceOf(Date);
+    expect(cloned.list[0].at.toISOString()).toBe('2026-04-01T00:00:00.000Z');
+});

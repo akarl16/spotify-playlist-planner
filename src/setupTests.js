@@ -1,37 +1,51 @@
-// Jest's jsdom sandbox does not expose structuredClone even on Node 17+, but
-// fake-indexeddb needs it. v8.serialize/deserialize implements the same
-// structured-clone algorithm, so Date, Map, and Set survive the round trip —
-// a JSON-based polyfill would silently turn every stored Date into a string.
 if (!global.structuredClone) {
     const v8 = require('node:v8');
 
-    const fixRealmDateObjects = (value) => {
-        // v8 deserialization may create Date objects that don't pass jsdom's instanceof check
-        // Fix them by recreating in the current realm
-        if (Object.prototype.toString.call(value) === '[object Date]' &&
-            !(value instanceof Date)) {
-            return new Date(value.getTime());
+    // v8.serialize/deserialize implements the structured-clone algorithm, but
+    // builds the result in Node's realm — so a cloned Date fails `instanceof
+    // Date` against jsdom's realm. Re-wrap realm-sensitive types in the test
+    // realm while leaving everything else structurally intact.
+    //
+    // Cross-realm `instanceof` is unreliable here, so types are detected via
+    // Object.prototype.toString. Covers Date, Map, Set, Array, and plain
+    // objects, which is everything this codebase stores. TypedArrays and
+    // ArrayBuffers are not handled because nothing stores them.
+    const toTestRealm = (value, seen = new WeakMap()) => {
+        if (value === null || typeof value !== 'object') return value;
+        if (seen.has(value)) return seen.get(value);
+
+        const tag = Object.prototype.toString.call(value);
+
+        if (tag === '[object Date]') return new Date(value.getTime());
+
+        if (tag === '[object Map]') {
+            const out = new Map();
+            seen.set(value, out);
+            for (const [k, v] of value) out.set(toTestRealm(k, seen), toTestRealm(v, seen));
+            return out;
         }
-        // Recursively fix nested objects
-        if (value !== null && typeof value === 'object') {
-            if (Array.isArray(value)) {
-                return value.map(fixRealmDateObjects);
-            }
-            const result = {};
-            for (const key in value) {
-                if (Object.prototype.hasOwnProperty.call(value, key)) {
-                    result[key] = fixRealmDateObjects(value[key]);
-                }
-            }
-            return result;
+
+        if (tag === '[object Set]') {
+            const out = new Set();
+            seen.set(value, out);
+            for (const v of value) out.add(toTestRealm(v, seen));
+            return out;
         }
-        return value;
+
+        if (Array.isArray(value)) {
+            const out = [];
+            seen.set(value, out);
+            value.forEach((v, i) => { out[i] = toTestRealm(v, seen); });
+            return out;
+        }
+
+        const out = {};
+        seen.set(value, out);
+        for (const [k, v] of Object.entries(value)) out[k] = toTestRealm(v, seen);
+        return out;
     };
 
-    global.structuredClone = (value) => {
-        const deserialized = v8.deserialize(v8.serialize(value));
-        return fixRealmDateObjects(deserialized);
-    };
+    global.structuredClone = (value) => toTestRealm(v8.deserialize(v8.serialize(value)));
 }
 
 import 'fake-indexeddb/auto';
