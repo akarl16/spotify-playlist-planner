@@ -1,3 +1,9 @@
+import 'fake-indexeddb/auto';
+import '@testing-library/jest-dom';
+
+// Runs after the imports above — Babel hoists imports regardless of source
+// position. Safe because fake-indexeddb only calls structuredClone at put()
+// time, well after this assignment.
 if (!global.structuredClone) {
     const v8 = require('node:v8');
 
@@ -7,9 +13,11 @@ if (!global.structuredClone) {
     // realm while leaving everything else structurally intact.
     //
     // Cross-realm `instanceof` is unreliable here, so types are detected via
-    // Object.prototype.toString. Covers Date, Map, Set, Array, and plain
-    // objects, which is everything this codebase stores. TypedArrays and
-    // ArrayBuffers are not handled because nothing stores them.
+    // Object.prototype.toString. Date, Map, Set, and Array are reconstructed
+    // faithfully. EVERYTHING ELSE falls through to the plain-object branch and
+    // is rebuilt as a plain object — RegExp, Error, TypedArray, and class
+    // instances all lose their prototype. That is tolerable only because this
+    // codebase stores none of them; if that changes, this needs another branch.
     const toTestRealm = (value, seen = new WeakMap()) => {
         if (value === null || typeof value !== 'object') return value;
         if (seen.has(value)) return seen.get(value);
@@ -47,9 +55,6 @@ if (!global.structuredClone) {
 
     global.structuredClone = (value) => toTestRealm(v8.deserialize(v8.serialize(value)));
 }
-
-import 'fake-indexeddb/auto';
-import '@testing-library/jest-dom';
 
 // Each test file gets a fresh IndexedDB. Without this, databases opened in one
 // test file leak into the next and version upgrades fire unpredictably.
