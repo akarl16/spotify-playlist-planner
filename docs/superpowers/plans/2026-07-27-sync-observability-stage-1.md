@@ -772,7 +772,9 @@ async function setPlaylists(playlists) {
 
 - [ ] **Step 6: Normalize the cleared-trackList shape in `setPlaylistNoOverwrite`**
 
-Replace `setPlaylistNoOverwrite` (currently `src/database.js:49-62`). The existing version sets `trackList: undefined` on a snapshot change; using `[]` keeps the field's shape consistent everywhere. This is safe **only** because every consumer tests `.length` rather than presence — see Global Constraints.
+Replace `setPlaylistNoOverwrite` (currently `src/database.js:49-62`). The existing version sets `trackList: undefined` on a snapshot change; using `[]` keeps the field's shape consistent everywhere.
+
+**This is only safe if every consumer tests `.length`.** `App.jsx:193` does NOT — it tests presence (`if (!playlistHeader.trackList)`), and `[]` is truthy there, so switching to `[]` without also fixing that line silently stops snapshot-changed playlists from re-fetching. That is the same defect class as the 440-empty-playlist bug. **Fix `App.jsx:193` to `if (!playlistHeader.trackList?.length)` as part of this task**, even though Task 10 later deletes that function — every intermediate commit must be correct.
 
 ```javascript
 async function setPlaylistNoOverwrite(playlist, store) {
