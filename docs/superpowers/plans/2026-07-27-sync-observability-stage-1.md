@@ -2015,7 +2015,7 @@ async function runSync({ emit, spotifyClient = spotify }) {
     const classPlaylists = await syncPlaylistBatch(classHeaders, 'class', { emit, spotifyClient });
     classPlaylists.sort((a, b) => b.name.localeCompare(a.name));
 
-    await reportRepairQueue(headers, { emit });
+    await reportRepairQueue([...libraryHeaders, ...classHeaders], { emit });
 
     emit({ type: 'sync:complete', at: Date.now() });
 
@@ -2187,8 +2187,12 @@ async function fetchAllPlaylistItems(playlistId, phase, { emit, spotifyClient })
 
 // STAGE 1: reports what WOULD be repaired without repairing it. Executing here
 // would fix the damage mid-baseline and destroy the measurement.
-async function reportRepairQueue(headers, { emit }) {
-    const headersById = Object.fromEntries(headers.map((header) => [header.id, header]));
+async function reportRepairQueue(inScopeHeaders, { emit }) {
+    // Only library + class headers. The migration seeded syncState for ALL 628
+    // stored playlists, including the 58 that are neither and are never fetched
+    // by design — passing every header would inflate the repair queue with
+    // playlists that are not damaged, just out of scope.
+    const headersById = Object.fromEntries(inScopeHeaders.map((header) => [header.id, header]));
     const needingRepair = await getPlaylistIdsNeedingRepair(headersById);
 
     // phase:progress, not phase:start — the phase must stay visually `pending`
