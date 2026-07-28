@@ -534,3 +534,29 @@ stats line and the collapse control off screen. Unit tests missed it because the
 supply a single failure. Fixed: the list renders 8 rows plus an "…and N more"
 summary, and the panel is capped at `90vh` with scroll. `telemetry.incomplete` still
 holds every entry — only the rendering is capped.
+
+## Carried into Stage 2
+
+Two structural issues surfaced by the whole-branch review. Neither is a bug today —
+both are traps the Stage 2 work will spring if not handled deliberately.
+
+**`runSync` snapshots its return value before repair runs.** It builds and sorts
+`libraryPlaylists` / `classPlaylists`, and only then calls `reportRepairQueue`. That
+is harmless while repair does no work. Once Stage 2's repair phase actually re-fetches,
+the repaired records will not be in the arrays handed back to `App.jsx` and
+`buildTrackLibrary` — the user would see pre-repair data until a reload. Either repair
+must update those arrays in place, or `runSync` must re-read from IndexedDB after the
+repair phase completes.
+
+**The skip predicate and `needsSync` have diverged.** The engine skips on
+`existing?.trackList?.length` (`syncEngine.js`), while `needsSync` — written, exported
+and unit-tested in `syncState.js` — is used only by the repair queue. Stage 2 needs
+both at that one call site: a snapshot-aware skip, *and* a force path, because repair
+must not be skipped by the very partial data it exists to replace. Reconcile the two
+rather than adding a third rule.
+
+**Deferred minor, worth folding into the retry work.** A 200 response with a
+non-JSON body throws a raw `SyntaxError` from `response.json()` rather than a
+`SpotifyApiError`, so `syncState` types it `kind: 'http'`. Harmless now, but the
+headline Stage 1 finding is the purity of `byErrorKind`, and that claim should stay
+trustworthy once retry starts branching on error kind.
