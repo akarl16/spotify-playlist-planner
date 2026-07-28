@@ -119,3 +119,26 @@ test('getPlaylistIdsNeedingRepair returns only playlists that are not complete',
 
     expect(ids).toEqual(['pl-bad']);
 });
+
+test('a header with no sync state at all is reported as needing repair', async () => {
+    // Never attempted, so no syncState row exists. Driving off the state store
+    // instead of the headers would make this playlist invisible forever.
+    const ids = await getPlaylistIdsNeedingRepair({
+        'pl-new': { id: 'pl-new', snapshot_id: 'snap-1' }
+    });
+
+    expect(ids).toEqual(['pl-new']);
+});
+
+test('a stored state with no matching header is ignored', async () => {
+    // Deleted from Spotify: it has state but is no longer in the account.
+    await recordSuccess('pl-gone', {
+        snapshotId: 'snap-1', fetchedItemCount: 5, storedTrackCount: 5, tracksTotal: 5, reachedEnd: false
+    });
+
+    const ids = await getPlaylistIdsNeedingRepair({
+        'pl-live': { id: 'pl-live', snapshot_id: 'snap-2' }
+    });
+
+    expect(ids).toEqual(['pl-live']);
+});

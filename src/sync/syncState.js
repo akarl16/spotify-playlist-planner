@@ -83,16 +83,16 @@ function needsSync(state, playlistHeader) {
     return state.snapshotId !== playlistHeader.snapshot_id;
 }
 
+// Iterates HEADERS, not stored states: a playlist we have never attempted has no
+// syncState row at all, and it still needs syncing. Driving off the state store
+// would make that case invisible.
 async function getPlaylistIdsNeedingRepair(playlistHeadersById) {
     const states = await database.getAllSyncStates();
+    const stateByPlaylistId = new Map(states.map((state) => [state.playlistId, state]));
 
-    return states
-        .filter((state) => {
-            const header = playlistHeadersById[state.playlistId];
-            if (!header) return false;
-            return needsSync(state, header);
-        })
-        .map((state) => state.playlistId);
+    return Object.values(playlistHeadersById)
+        .filter((header) => needsSync(stateByPlaylistId.get(header.id), header))
+        .map((header) => header.id);
 }
 
 export {
