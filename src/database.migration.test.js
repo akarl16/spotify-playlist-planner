@@ -25,6 +25,8 @@ async function seedV2Database() {
         description: '',
         snapshot_id: 'snap-1',
         tracks: { total: 2 },
+        owner: { id: 'akarl16', display_name: 'Adam' },
+        unknownLegacyField: { nested: ['a', 'b'], keep: true },
         trackList: [
             sharedTrack,
             {
@@ -92,6 +94,18 @@ test('migration leaves playlist records completely untouched', async () => {
     expect(playlist.trackList[0]).toEqual(sharedTrack);
     expect(playlist.trackList[0].added_at).toBeInstanceOf(Date);
     expect(playlist.trackRefs).toBeUndefined();
+});
+
+test('migration preserves fields it knows nothing about', () => {
+    // Guards against a future regression that read-modify-writes playlist records
+    // during the upgrade: any reshaping put() would drop unknown properties.
+    return seedV2Database()
+        .then(() => database.init())
+        .then(() => database.getPlaylist('pl-full'))
+        .then((playlist) => {
+            expect(playlist.owner).toEqual({ id: 'akarl16', display_name: 'Adam' });
+            expect(playlist.unknownLegacyField).toEqual({ nested: ['a', 'b'], keep: true });
+        });
 });
 
 test('opens cleanly on a fresh database with no v2 data', async () => {

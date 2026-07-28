@@ -190,7 +190,7 @@ function App() {
     setLoadState({ ...loadState });
     const playlists = await Promise.all(
       _playlistHeaders.map(async (playlistHeader) => {
-        if (!playlistHeader.trackList) {
+        if (!playlistHeader.trackList?.length) {
           console.debug(`Populating tracklist for playlist ${playlistHeader.id}`);
           playlistHeader.trackList = await retrievePlaylistTracks(playlistHeader.id);
           database.setPlaylist(playlistHeader);

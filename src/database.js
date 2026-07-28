@@ -93,7 +93,10 @@ async function setPlaylistNoOverwrite(playlist, store) {
     }
 
     if (existingPlaylist.snapshot_id !== playlist.snapshot_id) {
-        // Content changed upstream — drop cached tracks so the engine re-fetches.
+        // Content changed upstream — drop cached tracks so they get re-fetched.
+        // Consumers MUST test `trackList.length`, never `trackList` itself: [] is
+        // truthy, and treating it as "already have data" is precisely the bug that
+        // left 440 playlists permanently empty.
         await store.put({ ...playlist, trackList: [] });
         return;
     }
