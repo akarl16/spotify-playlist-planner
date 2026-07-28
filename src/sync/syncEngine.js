@@ -7,6 +7,17 @@ import { mapWithConcurrency } from './pool.js';
 const LIBRARY_REGEX = /\[LIBRARY\]/;
 const PAGE_SIZE = 50;
 
+// Playlists created in Spotify never appeared until the local store was emptied.
+const HEADER_STALENESS_MS = 24 * 60 * 60 * 1000;
+const HEADERS_SYNCED_AT_KEY = 'headers_synced_at';
+
+function headersAreFresh(storedCount) {
+    if (storedCount === 0) return false;
+    const syncedAt = Number(localStorage.getItem(HEADERS_SYNCED_AT_KEY));
+    if (!Number.isFinite(syncedAt) || syncedAt === 0) return false;
+    return Date.now() - syncedAt < HEADER_STALENESS_MS;
+}
+
 // Tuned by measurement, not guessed. Cold runs of the same 573-playlist library:
 //   unbounded -> 459 failed, 462 rate-limit errors, ~30s
 //   pool of 4 -> 166 failed, 166 rate-limit errors, ~70s
@@ -56,9 +67,7 @@ async function syncPlaylistHeaders({ emit, spotifyClient }) {
 
     const stored = await database.getPlaylists();
 
-    // STAGE 1: only fetches when the store is completely empty, exactly as today.
-    // Stage 2 replaces this with a staleness window.
-    if (stored.length > 0) {
+    if (headersAreFresh(stored.length)) {
         emit({ type: 'phase:progress', phase: 'headers', done: stored.length, total: stored.length });
         emit({ type: 'phase:complete', phase: 'headers', at: Date.now() });
         return stored;
@@ -87,6 +96,20 @@ async function syncPlaylistHeaders({ emit, spotifyClient }) {
     }
 
     await database.setPlaylists(headers);
+
+    // Playlists that no longer exist upstream. Pruning here rather than lazily keeps
+    // the repair queue honest — a deleted playlist can never be repaired.
+    const liveIds = new Set(headers.map((header) => header.id));
+    const staleIds = (await database.getPlaylists())
+        .map((playlist) => playlist.id)
+        .filter((id) => !liveIds.has(id));
+
+    if (staleIds.length > 0) {
+        await database.deletePlaylists(staleIds);
+    }
+
+    localStorage.setItem(HEADERS_SYNCED_AT_KEY, String(Date.now()));
+
     emit({ type: 'phase:complete', phase: 'headers', at: Date.now() });
 
     return await database.getPlaylists();

@@ -35,6 +35,7 @@ function makeClient({ playlists, itemsByPlaylist, failOn = {} }) {
 }
 
 beforeEach(async () => {
+    localStorage.clear();
     await database.init();
 });
 
@@ -287,6 +288,48 @@ test('a legitimately empty playlist is recorded complete', async () => {
     await runSync({ emit: () => {}, spotifyClient: client });
 
     expect((await database.getSyncState('cls')).status).toBe('complete');
+});
+
+test('headers are re-fetched when the stored set is stale', async () => {
+    await database.setPlaylists([header('old', '2026-01-01 Ride', 1)]);
+    localStorage.setItem('headers_synced_at', String(Date.now() - 25 * 60 * 60 * 1000));
+
+    const client = makeClient({
+        playlists: [header('old', '2026-01-01 Ride', 1), header('new', '2026-07-25 Ride', 1)],
+        itemsByPlaylist: { old: [makeItem('t1')], new: [makeItem('t2')] }
+    });
+    const spy = jest.spyOn(client, 'getUserPlaylistsPage');
+
+    await runSync({ emit: () => {}, spotifyClient: client });
+
+    expect(spy).toHaveBeenCalled();
+    expect(await database.getPlaylist('new')).toBeDefined();
+});
+
+test('headers are not re-fetched while the stored set is fresh', async () => {
+    await database.setPlaylists([header('old', '2026-01-01 Ride', 1)]);
+    localStorage.setItem('headers_synced_at', String(Date.now()));
+
+    const client = makeClient({ playlists: [header('old', '2026-01-01 Ride', 1)], itemsByPlaylist: { old: [makeItem('t1')] } });
+    const spy = jest.spyOn(client, 'getUserPlaylistsPage');
+
+    await runSync({ emit: () => {}, spotifyClient: client });
+
+    expect(spy).not.toHaveBeenCalled();
+});
+
+test('a playlist deleted from Spotify is pruned along with its sync state', async () => {
+    await database.setPlaylists([header('gone', '2026-01-01 Ride', 1), header('kept', '2026-07-25 Ride', 1)]);
+    await database.putSyncState({ playlistId: 'gone', status: 'complete', snapshotId: 's1' });
+    localStorage.removeItem('headers_synced_at');
+
+    const client = makeClient({ playlists: [header('kept', '2026-07-25 Ride', 1)], itemsByPlaylist: { kept: [makeItem('t1')] } });
+
+    await runSync({ emit: () => {}, spotifyClient: client });
+
+    expect(await database.getPlaylist('gone')).toBeUndefined();
+    expect(await database.getSyncState('gone')).toBeUndefined();
+    expect(await database.getPlaylist('kept')).toBeDefined();
 });
 
 test('both fetch-phase totals are published before either phase starts', async () => {
