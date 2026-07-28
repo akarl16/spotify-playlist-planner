@@ -33,6 +33,28 @@ Two consequences drive the ordering below:
 - Package manager is **bun**. Tests run one-shot with `CI=true`.
 - Commit after every task.
 
+## Plan revised after Task 2's measurement
+
+Task 2 measured a pool of 2 producing **573/573 complete, zero errors of any kind**.
+Bounded concurrency alone eliminated rate limiting, which the plan had assumed would
+merely reduce it. Consequences:
+
+- **`SYNC_CONCURRENCY` is 2, not 4.** Measured, not guessed — see the constant's comment.
+- **Task 4 (token refresh) is DROPPED.** A 119 s cold sync against a one-hour token
+  is not a plausible failure, and no auth error has ever been observed across four
+  instrumented runs. It would add a concurrency-sensitive code path for no measured
+  benefit. Revisit if a cold sync ever approaches the token lifetime.
+- **Remaining task order is 6 → 5 → 3**, by measured value rather than the original
+  ordering. Task numbers are unchanged so the briefs still extract correctly.
+  - **Task 6 first.** A warm load makes zero API requests, so newly created playlists
+    never appear at all. This is a live functional gap, not a robustness nicety.
+  - **Task 5 second.** A mid-pagination truncation leaves `trackList.length > 0`, so
+    the skip predicate hides it permanently. Repair is the only recovery path for it.
+  - **Task 3 last, and demoted.** Retry is now insurance against conditions not yet
+    observed, not a correctness requirement. One clean run is not proof against a
+    slower network or a larger library.
+- **Blocking backdrop confirmed.** 119 s cold, 1.1 s warm. The cold cost is one-time.
+
 ## Already fixed in Stage 1 — do not re-plan
 
 These appeared on the original Stage 2 list and are already done: `tx.done` awaited on playlist writes, the `[]`-is-truthy skip bug, `sort((a,b) => a.name - b.name)` (the engine uses `localeCompare`), and `buildTrackLibrary` mutating its inputs.
@@ -537,7 +559,11 @@ git commit -m "feat: retry rate-limited and transient Spotify failures with jitt
 
 ---
 
-### Task 4: Refresh the access token on 401 and ahead of expiry
+### Task 4: ~~Refresh the access token on 401 and ahead of expiry~~ — DROPPED
+
+> Dropped after Task 2's measurement. No auth error has been observed in any
+> instrumented run, and a 119 s cold sync cannot approach a one-hour token lifetime.
+> Retained below for reference only — **do not implement**.
 
 No auth failure occurred in the ~30 s baseline. It becomes reachable precisely *because* bounded concurrency stretches a sync toward the one-hour token lifetime — a risk this stage creates.
 
