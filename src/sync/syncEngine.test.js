@@ -148,7 +148,12 @@ test('a playlist that already has tracks and a verified sync state is not re-fet
     expect((await database.getPlaylist('cls')).trackList[0].id).toBe('cached');
 });
 
-test('a 429 causes no inline retry — each attempt, including repair, makes exactly one pass', async () => {
+test('the engine itself does not retry — retry lives in spotifyFetch', async () => {
+    // The engine's injected client throws a single, final SpotifyApiError per call —
+    // it never sees intermediate retry attempts. Retrying a rate-limited or transient
+    // failure is the transport's job (spotifyFetch), so the engine only ever observes
+    // one outcome per call and reacts to it (batch break, repair pass), never retrying
+    // inline itself.
     const items = Array.from({ length: 120 }, (_, i) => makeItem('t' + i));
     const client = makeClient({
         playlists: [header('lib', '[LIBRARY] Main', 120)],

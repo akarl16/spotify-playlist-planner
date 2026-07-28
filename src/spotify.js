@@ -263,10 +263,31 @@ function parseRetryAfter(headerValue) {
     return Number.isFinite(seconds) && seconds >= 0 ? seconds : null;
 }
 
-// The single point every Spotify request passes through. Throws SpotifyApiError
-// on any non-2xx or transport failure. Deliberately does NOT retry — retry lands
-// in stage 2, and adding it here would invalidate the stage 1 baseline.
-async function spotifyFetch(path, { method = 'GET', body = null, onApiCall = null } = {}) {
+const RETRY_MAX_ATTEMPTS = 5;
+const RETRY_BASE_MS = 1000;
+const RETRY_JITTER_FRACTION = 0.5;
+
+const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Spotify's Retry-After is authoritative when present. Otherwise back off
+// exponentially with jitter — without jitter, every worker that was rejected in the
+// same window wakes at the same instant and recreates the burst that caused it.
+function computeBackoffMs(attempt, retryAfterSeconds, random = Math.random) {
+    if (retryAfterSeconds !== null && retryAfterSeconds !== undefined) {
+        return Math.round(retryAfterSeconds * 1000);
+    }
+    const base = RETRY_BASE_MS * Math.pow(2, attempt - 1);
+    return Math.round(base * (1 + RETRY_JITTER_FRACTION * random()));
+}
+
+function isRetryable(error) {
+    return error.kind === 'rate_limit' || error.kind === 'network' || error.status >= 500;
+}
+
+// The single point every Spotify request passes through, for one attempt. Throws
+// SpotifyApiError on any non-2xx or transport failure. Retrying is the job of
+// spotifyFetch below, which wraps this.
+async function spotifyFetchOnce(path, { method = 'GET', body = null, onApiCall = null } = {}) {
     const token = getAccessToken();
     if (!token) {
         throw new SpotifyApiError('No access token available', { status: 0, kind: 'auth' });
@@ -316,7 +337,32 @@ async function spotifyFetch(path, { method = 'GET', body = null, onApiCall = nul
         return null;
     }
 
-    return await response.json();
+    try {
+        return await response.json();
+    } catch (err) {
+        // A 200 with an unparseable body would otherwise escape as a raw
+        // SyntaxError and be mis-typed as kind 'http' further downstream.
+        throw new SpotifyApiError(`Malformed JSON in Spotify response: ${err.message}`, {
+            status: response.status,
+            kind: 'http'
+        });
+    }
+}
+
+async function spotifyFetch(path, { method = 'GET', body = null, onApiCall = null, maxAttempts = RETRY_MAX_ATTEMPTS, sleep = defaultSleep } = {}) {
+    let lastError;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+            return await spotifyFetchOnce(path, { method, body, onApiCall });
+        } catch (err) {
+            lastError = err;
+            if (!isRetryable(err) || attempt === maxAttempts) throw err;
+            await sleep(computeBackoffMs(attempt, err.retryAfter));
+        }
+    }
+
+    throw lastError;
 }
 
 async function getUserPlaylistsPage({ limit = 50, offset = 0, onApiCall = null } = {}) {
@@ -349,5 +395,7 @@ export {
     addItemsToPlaylist,
     spotifyFetch,
     SpotifyApiError,
-    __setAccessTokenForTests
+    __setAccessTokenForTests,
+    computeBackoffMs,
+    RETRY_MAX_ATTEMPTS
 };
