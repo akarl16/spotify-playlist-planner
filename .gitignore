@@ -1,5 +1,6 @@
 node_modules
 build
+.superpowers
 # Environment files
 .env
 .env.local
