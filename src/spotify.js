@@ -237,72 +237,117 @@ function getAccessToken() {
     return access_token;
 }
 
-/**
- * Get playlist tracks using the updated Feb 2026 API endpoint.
- * Replaces the deprecated spotifyApi.getPlaylistTracks() which uses /tracks
- * @param playlistId - The Spotify playlist ID
- * @param options - Object with limit and offset properties
- * @returns Promise with items array and pagination info
- */
-async function getPlaylistItems(playlistId, options = {}) {
-    const { limit = 50, offset = 0 } = options;
+const SPOTIFY_API_BASE = 'https://api.spotify.com/v1';
+
+class SpotifyApiError extends Error {
+    constructor(message, { status, retryAfter = null, kind }) {
+        super(message);
+        this.name = 'SpotifyApiError';
+        this.status = status;
+        this.retryAfter = retryAfter;
+        this.kind = kind;
+    }
+}
+
+function classifyStatus(status) {
+    if (status === 429) return 'rate_limit';
+    if (status === 401 || status === 403) return 'auth';
+    return 'http';
+}
+
+// Spotify sends Retry-After in whole seconds. Anything unparseable is treated as
+// absent so callers fall back to their own backoff rather than waiting on NaN.
+function parseRetryAfter(headerValue) {
+    if (!headerValue) return null;
+    const seconds = Number(headerValue);
+    return Number.isFinite(seconds) && seconds >= 0 ? seconds : null;
+}
+
+// The single point every Spotify request passes through. Throws SpotifyApiError
+// on any non-2xx or transport failure. Deliberately does NOT retry — retry lands
+// in stage 2, and adding it here would invalidate the stage 1 baseline.
+async function spotifyFetch(path, { method = 'GET', body = null, onApiCall = null } = {}) {
     const token = getAccessToken();
-    
     if (!token) {
-        throw new Error('No access token available');
+        throw new SpotifyApiError('No access token available', { status: 0, kind: 'auth' });
     }
-    
-    const url = `https://api.spotify.com/v1/playlists/${playlistId}/items?limit=${limit}&offset=${offset}`;
-    
-    const response = await fetch(url, {
-        headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
+
+    const startedAt = Date.now();
+    let response;
+
+    try {
+        response = await fetch(`${SPOTIFY_API_BASE}${path}`, {
+            method,
+            headers: {
+                Authorization: `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            },
+            body: body ? JSON.stringify(body) : undefined
+        });
+    } catch (err) {
+        if (onApiCall) {
+            onApiCall({ path, method, status: 0, rateLimited: false, durationMs: Date.now() - startedAt });
         }
-    });
-    
-    if (!response.ok) {
-        throw new Error(`Spotify API error: ${response.status} ${response.statusText}`);
+        throw new SpotifyApiError(err.message, { status: 0, kind: 'network' });
     }
-    
+
+    if (onApiCall) {
+        onApiCall({
+            path,
+            method,
+            status: response.status,
+            rateLimited: response.status === 429,
+            durationMs: Date.now() - startedAt
+        });
+    }
+
+    if (!response.ok) {
+        throw new SpotifyApiError(
+            `Spotify API error: ${response.status} ${response.statusText}`,
+            {
+                status: response.status,
+                retryAfter: parseRetryAfter(response.headers.get('Retry-After')),
+                kind: classifyStatus(response.status)
+            }
+        );
+    }
+
+    if (response.status === 204) {
+        return null;
+    }
+
     return await response.json();
 }
 
-/**
- * Add tracks to playlist using the updated Feb 2026 API endpoint.
- * Replaces the deprecated spotifyApi.addTracksToPlaylist() which uses /tracks
- * @param playlistId - The Spotify playlist ID
- * @param uris - Array of Spotify track URIs
- * @returns Promise with response data
- */
+async function getUserPlaylistsPage({ limit = 50, offset = 0, onApiCall = null } = {}) {
+    return await spotifyFetch(`/me/playlists?limit=${limit}&offset=${offset}`, { onApiCall });
+}
+
+async function getPlaylistItems(playlistId, { limit = 50, offset = 0, onApiCall = null } = {}) {
+    return await spotifyFetch(`/playlists/${playlistId}/items?limit=${limit}&offset=${offset}`, { onApiCall });
+}
+
 async function addItemsToPlaylist(playlistId, uris) {
-    const token = getAccessToken();
-    
-    if (!token) {
-        throw new Error('No access token available');
-    }
-    
-    const url = `https://api.spotify.com/v1/playlists/${playlistId}/items`;
-    
-    const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-            uris: uris
-        })
-    });
-    
-    if (!response.ok) {
-        throw new Error(`Spotify API error: ${response.status} ${response.statusText}`);
-    }
-    
-    return await response.json();
+    return await spotifyFetch(`/playlists/${playlistId}/items`, { method: 'POST', body: { uris } });
+}
+
+// Test seam only — production code sets access_token through isAuthorized().
+function __setAccessTokenForTests(token) {
+    access_token = token;
 }
 
 const clientId = "c4145d13614447e9b3bcd287499086f4";
 const spotifyApi = new SpotifyWebApi();
 
-export { isAuthorized, authorizeSpotify, getSpotifyApi, getAccessToken, getPlaylistItems, addItemsToPlaylist }
+export {
+    isAuthorized,
+    authorizeSpotify,
+    getSpotifyApi,
+    getAccessToken,
+    getUserPlaylistsPage,
+    getPlaylistItems,
+    addItemsToPlaylist,
+    spotifyFetch,
+    SpotifyApiError,
+    __setAccessTokenForTests
+};
