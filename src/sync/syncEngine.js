@@ -171,7 +171,17 @@ async function syncOnePlaylist(header, phase, { emit, spotifyClient, force = fal
     );
 
     // Partial data is still worth keeping — it just must never be called complete.
-    const playlist = { ...header, trackList };
+    //
+    // But a FAILED fetch must never shrink what is already stored. Repair forces a
+    // re-fetch of playlists that may already hold complete data (a changed
+    // snapshot_id alone puts one in the queue), and a 429 on page one would
+    // otherwise replace a full track list with []. A successful fetch is still
+    // authoritative even when shorter, since tracks can be removed upstream.
+    const existingCount = existing?.trackList?.length ?? 0;
+    const keepExisting = Boolean(error) && trackList.length < existingCount;
+    const storedTrackList = keepExisting ? existing.trackList : trackList;
+
+    const playlist = { ...header, trackList: storedTrackList };
     await database.setPlaylist(playlist);
 
     const tracksTotal = header.tracks?.total ?? null;
@@ -180,7 +190,7 @@ async function syncOnePlaylist(header, phase, { emit, spotifyClient, force = fal
         await recordFailure(header.id, {
             error,
             fetchedItemCount,
-            storedTrackCount: trackList.length,
+            storedTrackCount: storedTrackList.length,
             tracksTotal,
             snapshotId: header.snapshot_id
         });
@@ -190,7 +200,7 @@ async function syncOnePlaylist(header, phase, { emit, spotifyClient, force = fal
             playlistId: header.id,
             name: header.name,
             cause: { kind: error.kind ?? 'http', status: error.status ?? 0 },
-            storedTrackCount: trackList.length,
+            storedTrackCount: storedTrackList.length,
             tracksTotal
         });
         return playlist;

@@ -461,3 +461,78 @@ test('both fetch-phase totals are published before either phase starts', async (
     expect(classTotalPublished).toBeGreaterThanOrEqual(0);
     expect(classTotalPublished).toBeLessThan(firstLibraryStart);
 });
+
+test('a failed repair fetch does not destroy already-stored tracks', async () => {
+    // A complete playlist whose snapshot changed upstream goes into the repair
+    // queue. If that forced re-fetch fails on page one, the good data must survive.
+    const stored = Array.from({ length: 40 }, (_, i) => ({
+        id: `t${i}`, added_at: new Date(), name: `Track ${i}`, artists: [], duration_ms: 1000
+    }));
+    await database.setPlaylist({ ...header('cls', '2026-07-25 Ride', 40, 'snap-OLD'), trackList: stored });
+    await database.putSyncState({
+        playlistId: 'cls', snapshotId: 'snap-OLD', status: 'complete',
+        fetchedItemCount: 40, storedTrackCount: 40, tracksTotal: 40,
+        lastAttemptAt: 1, lastSuccessAt: 1, attempts: 1, lastError: null
+    });
+
+    // Header now advertises a NEW snapshot, so repair picks it up — and the fetch 429s.
+    const client = makeClient({
+        playlists: [header('cls', '2026-07-25 Ride', 40, 'snap-NEW')],
+        itemsByPlaylist: { cls: [makeItem('t1')] },
+        failOn: { cls: { atOffset: 0, status: 429, kind: 'rate_limit' } }
+    });
+
+    await runSync({ emit: () => {}, spotifyClient: client });
+
+    const after = await database.getPlaylist('cls');
+    expect(after.trackList).toHaveLength(40);
+
+    // And the recorded state must not claim we hold zero tracks.
+    expect((await database.getSyncState('cls')).storedTrackCount).toBe(40);
+});
+
+test('a successful re-fetch may legitimately shrink a playlist', async () => {
+    // Tracks removed upstream: a completed pagination is authoritative.
+    const stored = Array.from({ length: 10 }, (_, i) => ({
+        id: `t${i}`, added_at: new Date(), name: `Track ${i}`, artists: [], duration_ms: 1000
+    }));
+    await database.setPlaylist({ ...header('cls', '2026-07-25 Ride', 10, 'snap-OLD'), trackList: stored });
+    await database.putSyncState({
+        playlistId: 'cls', snapshotId: 'snap-OLD', status: 'complete',
+        fetchedItemCount: 10, storedTrackCount: 10, tracksTotal: 10,
+        lastAttemptAt: 1, lastSuccessAt: 1, attempts: 1, lastError: null
+    });
+
+    const client = makeClient({
+        playlists: [header('cls', '2026-07-25 Ride', 2, 'snap-NEW')],
+        itemsByPlaylist: { cls: [makeItem('a'), makeItem('b')] }
+    });
+
+    await runSync({ emit: () => {}, spotifyClient: client });
+
+    expect((await database.getPlaylist('cls')).trackList).toHaveLength(2);
+    expect((await database.getSyncState('cls')).status).toBe(SYNC_STATUS.COMPLETE);
+});
+
+test('a partial repair that fetched MORE than was stored does replace it', async () => {
+    const stored = [{ id: 't0', added_at: new Date(), name: 'Track 0', artists: [], duration_ms: 1000 }];
+    await database.setPlaylist({ ...header('lib', '[LIBRARY] Main', 200, 'snap-OLD'), trackList: stored });
+    await database.putSyncState({
+        playlistId: 'lib', snapshotId: 'snap-OLD', status: 'incomplete',
+        fetchedItemCount: 1, storedTrackCount: 1, tracksTotal: 200,
+        lastAttemptAt: 1, lastSuccessAt: null, attempts: 1,
+        lastError: { kind: 'rate_limit', status: 429, message: '429' }
+    });
+
+    const items = Array.from({ length: 200 }, (_, i) => makeItem(`n${i}`));
+    const client = makeClient({
+        playlists: [header('lib', '[LIBRARY] Main', 200, 'snap-NEW')],
+        itemsByPlaylist: { lib: items },
+        failOn: { lib: { atOffset: 50, status: 429, kind: 'rate_limit' } }
+    });
+
+    await runSync({ emit: () => {}, spotifyClient: client });
+
+    // 50 fetched beats 1 stored, so the better partial wins.
+    expect((await database.getPlaylist('lib')).trackList).toHaveLength(50);
+});

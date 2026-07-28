@@ -140,7 +140,10 @@ test('setPlaylists preserves an existing trackList when snapshot_id is unchanged
     expect(stored.trackList).toHaveLength(1);
 });
 
-test('setPlaylists clears the trackList when snapshot_id changed', async () => {
+test('setPlaylists KEEPS the trackList when snapshot_id changed', async () => {
+    // Deliberate reversal of the old behavior. Wiping here meant a failed re-fetch
+    // left the playlist empty when it previously held everything; syncState's
+    // snapshot mismatch is what drives the re-fetch, not an emptied trackList.
     await database.init();
     await database.setPlaylist({
         id: 'a', name: 'A', snapshot_id: 's1', tracks: { total: 1 }, trackList: [sharedTrack]
@@ -148,7 +151,9 @@ test('setPlaylists clears the trackList when snapshot_id changed', async () => {
 
     await database.setPlaylists([{ id: 'a', name: 'A', snapshot_id: 's2', tracks: { total: 1 } }]);
 
-    expect((await database.getPlaylist('a')).trackList).toEqual([]);
+    const stored = await database.getPlaylist('a');
+    expect(stored.trackList).toHaveLength(1);
+    expect(stored.snapshot_id).toBe('s2');
 });
 
 test('deletePlaylists removes both the playlist and its sync state', async () => {

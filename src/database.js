@@ -92,16 +92,18 @@ async function setPlaylistNoOverwrite(playlist, store) {
         return;
     }
 
-    if (existingPlaylist.snapshot_id !== playlist.snapshot_id) {
-        // Content changed upstream — drop cached tracks so they get re-fetched.
-        // Consumers MUST test `trackList.length`, never `trackList` itself: [] is
-        // truthy, and treating it as "already have data" is precisely the bug that
-        // left 440 playlists permanently empty.
-        await store.put({ ...playlist, trackList: [] });
-        return;
-    }
-
-    // Unchanged upstream — keep whatever tracks we already have.
+    // Whether or not the snapshot changed, keep the tracks we already hold.
+    //
+    // This used to wipe them to [] on a snapshot change, to force a re-fetch. That
+    // is data loss waiting to happen: the re-fetch can fail (a 429 on page one is
+    // enough), leaving the playlist empty when it previously held everything. Stale
+    // tracks beat no tracks while a refresh is pending.
+    //
+    // Nothing is lost by keeping them. What marks a playlist as needing a re-fetch
+    // is its syncState.snapshotId no longer matching the header, which `needsSync`
+    // keys off directly — independent of what trackList contains. The repair phase
+    // then re-fetches with `force`, and only replaces the stored list if the fetch
+    // actually produced something at least as complete.
     await store.put({ ...playlist, trackList: existingPlaylist.trackList ?? [] });
 }
 
