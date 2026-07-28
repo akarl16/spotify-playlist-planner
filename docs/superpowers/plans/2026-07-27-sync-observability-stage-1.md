@@ -2256,6 +2256,18 @@ const failedRun = apply([
     }
 ]);
 
+test('the repair row reports its queue as unverified, not damaged', () => {
+    const state = apply([
+        { type: 'sync:start', at: 0 },
+        { type: 'phase:progress', phase: 'repair', total: 570 }
+    ]);
+    render(<SyncBackdrop telemetry={state} />);
+
+    // Stage 1 marks every cached playlist unverified, so this number is the whole
+    // in-scope library. Calling it "queued" would read as "570 are broken".
+    expect(screen.getByText(/570 unverified/)).toBeInTheDocument();
+});
+
 test('shows every phase label when collapsed', () => {
     render(<SyncBackdrop telemetry={cleanRun} />);
 
@@ -2426,7 +2438,12 @@ function SyncBackdrop({ telemetry }) {
                                 )}
 
                                 <Box sx={{ ml: 'auto', fontFamily: 'monospace', fontSize: 12, fontWeight: 400, color: 'rgba(255,255,255,0.5)' }}>
-                                    {phase.status === 'pending' && phase.total > 0 ? `${phase.total} queued`
+                                    {phase.status === 'pending' && phase.total > 0
+                                        // "unverified", not "damaged": the migration marks every cached
+                                        // playlist unverified because a truncated one is indistinguishable
+                                        // from a healthy one, so this count is the whole in-scope library,
+                                        // not a damage estimate. Saying "queued" here would overstate it.
+                                        ? `${phase.total} ${phase.key === 'repair' ? 'unverified' : 'queued'}`
                                         : phase.status === 'pending' ? 'pending'
                                         : `${phase.done} / ${phase.total}`}
                                     {expanded && phase.apiCalls > 0 ? ` · ${phase.apiCalls} calls` : ''}
@@ -2522,7 +2539,7 @@ export default SyncBackdrop;
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `CI=true bunx react-scripts test --testPathPattern=SyncBackdrop`
-Expected: PASS, 7 tests.
+Expected: PASS, 8 tests.
 
 - [ ] **Step 6: Commit**
 
