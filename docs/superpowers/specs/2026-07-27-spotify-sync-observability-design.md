@@ -64,13 +64,15 @@ the emptiness check itself is wrong.
 
 | Defect | Location | Effect |
 | --- | --- | --- |
+| **`[]` is truthy, so an empty track list counts as "already fetched"** | `App.jsx:193` | **440 playlists permanently empty — the single largest source of damage** |
 | Headers fetched only when the DB is completely empty | `App.jsx:147-153` | Playlists created in Spotify never appear without a manual refresh |
 | Access token read from a stale module variable | `spotify.js:249` | Long syncs cross the 1-hour token lifetime, hit 401, and truncate the same way a 429 does |
 | `tx.done` never awaited; callers never await writes | `database.js:36-43`, `App.jsx:152`, `App.jsx:375` | `refreshData` races its own writes; write failures are silently dropped |
 | Deleted playlists never pruned | `setPlaylists` only adds and updates | Store accumulates playlists that no longer exist |
 | No `Retry-After` handling | fixed 6s sleep, itself unreachable | Backoff ignores Spotify's own guidance |
 | `sort((a, b) => a.name - b.name)` | `App.jsx:392` | String subtraction yields `NaN`; the sort is a silent no-op |
-| Tracks duplicated across playlists | `playlists.trackList` embeds full track objects | A track on 40 playlists is stored 40 times |
+| ~~Tracks duplicated across playlists~~ | `playlists.trackList` embeds full track objects | Measured at only 1.53× / 1.8 MB — **not a real problem**; normalization cut from scope |
+| `buildTrackLibrary` mutates the objects it reads | `App.jsx:307-339` | Repeat calls in one session accumulate duplicate list names and overwrite `added_at` |
 
 ### Out of scope
 
@@ -87,7 +89,7 @@ sits and deserves its own decision later.
 2. Establish, from a real run, where time goes and where failures occur.
 3. Make truncation detectable across reloads and automatically repairable.
 4. Stop provoking rate limits, and survive them when they happen.
-5. Reduce storage by normalizing tracks out of playlists.
+5. Stop `buildTrackLibrary` mutating the track objects it reads.
 
 ## Non-goals
 
@@ -106,10 +108,9 @@ Adding a `status` property to thrown Spotify errors makes the currently-unreacha
 instrumentation, the "baseline" run measures already-improved behavior and tells us
 nothing about the problem we set out to characterize.
 
-**Stage 1 — observe.** Telemetry, backdrop UI, sync-state store, storage
-normalization. On a 429 the engine still stops and persists what it has, exactly as
-today — but now records that the playlist is incomplete and why. Produces a baseline
-run.
+**Stage 1 — observe.** Telemetry, backdrop UI, and the `syncState` store. On a 429
+the engine still stops and persists what it has, exactly as today — but now records
+that the playlist is incomplete and why. Produces a baseline run.
 
 Stage 1's engine is a **behavior-preserving refactor of the network path**. It
 deliberately keeps these defects intact so the baseline measures the real problem:
@@ -147,7 +148,7 @@ library construction. Sync logic must be extractable to be observable and testab
 | `src/sync/telemetry.js` | new | Reduces the engine's event stream into the shape the backdrop renders |
 | `src/components/SyncBackdrop.jsx` | new | The progress UI |
 | `src/trackLibrary.js` | new | `buildTrackLibrary` extracted as a pure function |
-| `src/database.js` | modify | v3 schema, normalized stores, pruning |
+| `src/database.js` | modify | v3 schema (adds `syncState`), awaited transactions |
 | `src/App.jsx` | modify | Reduced to composition and the table |
 
 The engine emits events; it does not import React. The telemetry reducer turns
@@ -158,7 +159,15 @@ without the other two.
 
 ### Stores
 
-`playlists` — playlist metadata plus ordered track references, not track bodies.
+**Track normalization was cut after Stage 0.** It was originally in scope on the
+assumption of heavy track duplication. Measurement showed 1.53× duplication and
+1.8 MB of a 10.2 GB quota — a full, correct sync projects to single-digit MB. The
+migration is therefore additive only: `playlists` keeps its existing `trackList`
+shape and no `tracks` store is created. The `buildTrackLibrary` mutation bug that
+normalizing would have fixed incidentally is now fixed directly instead, which is
+the smaller change.
+
+`playlists` — **unchanged from v2.**
 
 ```js
 {
@@ -167,15 +176,9 @@ without the other two.
   description,
   snapshot_id,
   owner,
-  tracksTotal,                        // header's tracks.total, soft diagnostic only
-  trackRefs: [{ id, added_at }]       // replaces trackList
+  tracks: { total },                       // Spotify's header count
+  trackList: [{ id, added_at, name, artists, duration_ms }]
 }
-```
-
-`tracks` — new, keyed by track id, one record per unique track.
-
-```js
-{ id, name, artists, duration_ms }
 ```
 
 `syncState` — new, keyed by playlist id.
@@ -186,7 +189,7 @@ without the other two.
   snapshotId,                         // snapshot_id this state describes
   status,                             // 'complete' | 'incomplete' | 'failed' | 'never'
   fetchedItemCount,                   // raw items seen from the API, before filtering
-  storedTrackCount,                   // trackRefs.length after filtering
+  storedTrackCount,                   // trackList.length after filtering
   tracksTotal,                        // header's tracks.total at sync time
   lastAttemptAt,
   lastSuccessAt,
@@ -220,27 +223,43 @@ playlist stores fewer tracks than `tracks.total` reports. `fetchedItemCount` (ra
 pre-filter) is recorded so `tracksTotal` remains useful as a diagnostic signal
 without being load-bearing.
 
+### Emptiness is never a skip signal
+
+Stage 0 found 440 playlists holding `trackList: []` that the old code skipped
+forever because `[]` is truthy. Anywhere the engine decides whether a playlist
+needs fetching, the test is on **length**, never on presence:
+
+```js
+if (existing?.trackList?.length) { /* already have data */ }   // correct
+if (existing?.trackList)         { /* WRONG — [] passes */ }
+```
+
 ### Migration v2 → v3
 
-Runs inside the `versionchange` transaction:
+Additive only. Runs inside the `versionchange` transaction:
 
-1. Create `tracks` and `syncState` stores.
-2. For each existing playlist, write each `trackList` entry into `tracks` (keyed by
-   id, later writes idempotent), and replace `trackList` with `trackRefs`.
-3. Write a `syncState` record per playlist with `status: 'never'`, so every
-   pre-existing playlist is treated as unverified and eligible for repair. Existing
-   cached data is *not* trusted, because we know some of it is truncated and cannot
-   tell which.
+1. Create the `syncState` store.
+2. Write a `syncState` record per existing playlist with `status: 'never'`, so
+   every pre-existing playlist is treated as unverified and eligible for repair.
+   Existing cached data is *not* trusted, because we know 78 % of it is damaged
+   and cannot tell which records from the inside.
+
+No playlist record is rewritten and no track data is moved, so the migration is
+cheap and its blast radius is limited to a store that did not previously exist.
 
 The migration is local-only with no network calls. `added_at` values are `Date`
 objects and survive structured clone unchanged.
 
-### Side effect worth noting
+### The `buildTrackLibrary` mutation bug
 
-`buildTrackLibrary` currently mutates track objects loaded from IndexedDB
-(`track.lists += ...`, `track.plays = []` at `App.jsx:307-320`). Under
-normalization it hydrates fresh view-model objects from the `tracks` store instead,
-which removes that latent aliasing bug as a side effect of the change.
+`buildTrackLibrary` mutates the track objects it reads (`track.lists += ...`,
+`track.plays = []`, and it overwrites `playlistTrack.added_at` — `App.jsx:307-339`).
+Those objects come straight out of IndexedDB, so a second call within one session
+re-decorates already-decorated data and accumulates duplicate list names.
+
+Normalizing was going to fix this incidentally. With normalization cut, it is fixed
+directly: the extracted function builds fresh view models keyed off the stored
+tracks and never writes to its inputs. A test asserts the inputs are untouched.
 
 ## Sync engine
 
@@ -322,7 +341,7 @@ Add `fake-indexeddb`, then cover:
 | `spotifyFetch` retry logic | 429 honors `Retry-After`; 401 refreshes once and retries; 4xx fails fast; attempts are capped |
 | Worker pool | Concurrency never exceeds the cap; failures don't stall the pool |
 | `syncState` transitions | A pagination loop cut short records `incomplete`, never `complete` |
-| Migration v2 → v3 | Track bodies deduplicate; `trackRefs` preserve order and `added_at`; every playlist lands at `status: 'never'` |
+| Migration v2 → v3 | `syncState` is created; every existing playlist lands at `status: 'never'`; no playlist record is altered |
 | `buildTrackLibrary` | Recency scoring, play aggregation, list membership; no input mutation |
 
 The `syncState` and migration tests are the ones that would have caught the original
@@ -337,7 +356,7 @@ the backdrop's own stat line plus the console:
 - wall-clock time per phase
 - API call count and 429 count
 - playlists ending `incomplete`, by cause
-- IndexedDB size before and after normalization
+- IndexedDB size
 
 Stage 2 succeeds when the 429 count drops materially and the `incomplete` count
 reaches zero across two consecutive runs.
@@ -353,9 +372,10 @@ migration, so a bad migration degrades to a full re-sync rather than data loss.
 strictly slower than firing everything at once and dropping whatever fails. This is
 the correct trade and is the reason the backdrop work comes first.
 
-**Normalization lands alongside the sync rewrite.** These are independent changes
-sharing one migration. Landing them together was chosen deliberately to avoid two
-migrations, but it widens the blast radius of Stage 1.
+**The `never` seeding forces a full re-sync.** Marking all 628 playlists unverified
+means the first Stage 2 run re-fetches everything rather than trusting any cached
+data. That is deliberate — 78 % of it is damaged and the damage is not detectable
+from the inside — but it makes that run long.
 
 ## Stage 0 results
 
@@ -426,7 +446,9 @@ playlists are complete.
 **Storage normalization is not justified by storage pressure.** Measured
 duplication is 1.53× and total usage is 1.8 MB against a 10 GB quota. A full,
 correct sync would raise entries to roughly 21,000 and usage to single-digit
-megabytes — still negligible. The case for normalizing rests on correctness (it
-removes the `buildTrackLibrary` mutation bug) and on cheaper library rebuilds, not
-on space. Recorded here so the decision is revisited on evidence rather than the
-original assumption of heavy duplication.
+megabytes — still negligible.
+
+**Decision: normalization was cut from scope** on this evidence. The correctness
+benefit it carried (removing the `buildTrackLibrary` mutation bug) is achieved
+directly and more cheaply, and dropping it shrinks the riskiest part of the
+migration to nothing — the v3 upgrade no longer rewrites all 628 playlist records.

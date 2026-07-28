@@ -1,0 +1,141 @@
+<h2>A with a details drawer</h2>
+<p class="subtitle">Calm phase list by default. One click reveals the live feed and failure detail. Below: the same sync at the same moment, collapsed and expanded.</p>
+
+<style>
+  .spp { background:#121212; color:#fff; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; padding:26px; border-radius:10px; }
+  .spp-title { font-size:19px; font-weight:700; margin:0 0 4px; }
+  .spp-sub { font-size:13px; color:rgba(255,255,255,.55); margin:0 0 18px; }
+  .spp-bar { height:6px; background:rgba(255,255,255,.10); border-radius:3px; overflow:hidden; margin:7px 0; }
+  .spp-bar > i { display:block; height:100%; background:#1DB954; border-radius:3px; }
+  .spp-bar > i.warn { background:#ffaa00; }
+  .spp-row { display:flex; align-items:center; gap:10px; font-size:12.5px; padding:4px 0; }
+  .spp-row .nm { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .spp-row .ct { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11.5px; color:rgba(255,255,255,.5); }
+  .ico { width:15px; text-align:center; flex:0 0 15px; font-size:12px; }
+  .ok { color:#1DB954; } .warnc { color:#ffaa00; } .errc { color:#ff5252; } .dim { color:rgba(255,255,255,.35); }
+  .spp-phase { padding:11px 0; border-bottom:1px solid rgba(255,255,255,.07); }
+  .spp-phase:last-child { border-bottom:0; }
+  .ph-head { display:flex; align-items:center; gap:10px; font-size:14px; font-weight:600; }
+  .ph-head .ct { margin-left:auto; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; font-weight:400; color:rgba(255,255,255,.5); }
+  .spin { display:inline-block; width:13px; height:13px; border:2px solid rgba(29,185,84,.25); border-top-color:#1DB954; border-radius:50%; }
+  .pill { font-size:10.5px; font-weight:700; padding:2px 7px; border-radius:9px; letter-spacing:.3px; }
+  .pill.err { background:rgba(255,82,82,.16); color:#ff8a8a; }
+  .pill.warn { background:rgba(255,170,0,.16); color:#ffc65c; }
+  .toggle { display:flex; align-items:center; justify-content:center; gap:7px; width:100%; margin-top:16px; padding:9px; background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.09); border-radius:7px; font-size:12.5px; color:rgba(255,255,255,.75); cursor:pointer; }
+  .feed { background:rgba(0,0,0,.35); border-radius:6px; padding:7px 11px; margin-top:9px; }
+  .banner { background:rgba(255,170,0,.13); border-left:3px solid #ffaa00; padding:8px 11px; border-radius:5px; font-size:12.5px; margin-top:12px; color:#ffd27a; }
+  .errbox { background:rgba(255,82,82,.10); border-left:3px solid #ff5252; padding:9px 11px; border-radius:5px; font-size:12.5px; margin-top:10px; }
+  .statline { display:flex; gap:18px; flex-wrap:wrap; margin-top:14px; padding-top:13px; border-top:1px solid rgba(255,255,255,.07); font-size:12px; color:rgba(255,255,255,.55); font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  .statline b { color:#fff; font-weight:700; }
+  .stage-label { font-size:11px; text-transform:uppercase; letter-spacing:1.1px; color:rgba(255,255,255,.4); margin:0 0 9px; font-weight:700; }
+  .arrow { text-align:center; font-size:22px; color:#1DB954; margin:20px 0 16px; }
+  .callout { background:rgba(29,185,84,.07); border-left:3px solid #1DB954; padding:11px 14px; border-radius:6px; font-size:13.5px; margin:8px 0 26px; }
+</style>
+
+<div class="callout">
+  <strong>The one addition I made:</strong> the collapsed view carries a <span class="pill err">2 FAILED</span> badge on the affected phase. Without it, a silent truncation stays silent — you'd have no reason to ever expand. It only appears when something actually went wrong; a clean sync stays completely calm.
+</div>
+
+<!-- ============ COLLAPSED ============ -->
+<p class="stage-label">Default — collapsed</p>
+<div class="spp">
+  <div class="spp-title">Syncing your library…</div>
+  <div class="spp-sub">Elapsed 0:42 · about 1:10 remaining</div>
+  <div class="spp-bar"><i class="warn" style="width:38%"></i></div>
+
+  <div style="margin-top:12px">
+    <div class="spp-phase">
+      <div class="ph-head"><span class="ico ok">✓</span> Playlist headers <span class="ct">312 / 312</span></div>
+    </div>
+    <div class="spp-phase">
+      <div class="ph-head"><span class="ico ok">✓</span> Library playlists <span class="ct">6 / 6</span></div>
+    </div>
+    <div class="spp-phase">
+      <div class="ph-head">
+        <span class="ico"><span class="spin"></span></span> Class playlists
+        <span class="pill err">2 FAILED</span>
+        <span class="ct">97 / 306</span>
+      </div>
+      <div class="spp-bar"><i class="warn" style="width:32%"></i></div>
+    </div>
+    <div class="spp-phase">
+      <div class="ph-head"><span class="ico dim">○</span> <span class="dim">Repair incomplete playlists</span> <span class="ct dim">pending</span></div>
+    </div>
+  </div>
+
+  <div class="toggle">▾ &nbsp;Show details</div>
+</div>
+
+<div class="arrow">↓ &nbsp;click "Show details"</div>
+
+<!-- ============ EXPANDED ============ -->
+<p class="stage-label">Expanded — details drawer open</p>
+<div class="spp">
+  <div class="spp-title">Syncing your library…</div>
+  <div class="spp-sub">Elapsed 0:42 · about 1:10 remaining · 4 workers</div>
+  <div class="spp-bar"><i class="warn" style="width:38%"></i></div>
+
+  <div style="margin-top:12px">
+    <div class="spp-phase">
+      <div class="ph-head"><span class="ico ok">✓</span> Playlist headers <span class="ct">312 / 312 · 7 calls · 2.1s</span></div>
+    </div>
+    <div class="spp-phase">
+      <div class="ph-head"><span class="ico ok">✓</span> Library playlists <span class="ct">6 / 6 · 24 calls · 5.4s</span></div>
+    </div>
+
+    <div class="spp-phase">
+      <div class="ph-head">
+        <span class="ico"><span class="spin"></span></span> Class playlists
+        <span class="pill err">2 FAILED</span>
+        <span class="ct">97 / 306 · 387 calls</span>
+      </div>
+      <div class="spp-bar"><i class="warn" style="width:32%"></i></div>
+
+      <!-- live feed nests under the ACTIVE phase -->
+      <div class="feed">
+        <div class="spp-row"><span class="ico warnc">⏳</span><span class="nm">2026-07-19 Ride</span><span class="ct">429 · retry 2/5 in 4s</span></div>
+        <div class="spp-row"><span class="ico"><span class="spin"></span></span><span class="nm">2026-07-17 Climb</span><span class="ct">page 2 · 100 tracks</span></div>
+        <div class="spp-row"><span class="ico ok">✓</span><span class="nm">2026-07-15 Intervals</span><span class="ct">46 tracks · 310ms</span></div>
+        <div class="spp-row"><span class="ico ok">✓</span><span class="nm">2026-07-12 Endurance</span><span class="ct">52 tracks · 280ms</span></div>
+        <div class="spp-row"><span class="ico errc">✕</span><span class="nm">2026-07-10 Recovery</span><span class="ct">failed · will repair</span></div>
+      </div>
+    </div>
+
+    <div class="spp-phase">
+      <div class="ph-head"><span class="ico dim">○</span> <span class="dim">Repair incomplete playlists</span> <span class="ct dim">2 queued</span></div>
+    </div>
+  </div>
+
+  <div class="banner">⏳ Rate limited — 37 of 418 calls (8.8%). Backing off 4s. Median wait 2.4s.</div>
+
+  <div class="errbox">
+    <strong style="color:#ff8a8a">2 playlists incomplete</strong>
+    <div style="opacity:.8;margin-top:4px">2026-07-10 Recovery — stopped at 50 of 112 tracks (429)<br>2026-05-02 Sprints — token expired mid-fetch</div>
+    <div style="opacity:.65;margin-top:5px;font-size:11.5px">Both marked incomplete in storage; the repair phase will re-fetch them.</div>
+  </div>
+
+  <div class="statline">
+    <span><b>418</b> API calls</span>
+    <span><b class="warnc">37</b> rate limited</span>
+    <span><b class="errc">2</b> failed</span>
+    <span><b>11,204</b> tracks cached</span>
+  </div>
+
+  <div class="toggle">▴ &nbsp;Hide details</div>
+</div>
+
+<h3 style="margin-top:30px">Does this land?</h3>
+<div class="options">
+  <div class="option" data-choice="yes" onclick="toggleSelect(this)">
+    <div class="letter">✓</div>
+    <div class="content"><h3>Yes, build this</h3><p>Collapsed phase list, failure badge, details drawer with feed + errors + stats line.</p></div>
+  </div>
+  <div class="option" data-choice="less" onclick="toggleSelect(this)">
+    <div class="letter">−</div>
+    <div class="content"><h3>Expanded view is too dense</h3><p>Drop something — say which: the stats line, the rate-limit banner, or the per-phase call counts.</p></div>
+  </div>
+  <div class="option" data-choice="badge" onclick="toggleSelect(this)">
+    <div class="letter">!</div>
+    <div class="content"><h3>Rethink the failure badge</h3><p>You'd rather failures didn't interrupt the calm collapsed view, or want them shown differently.</p></div>
+  </div>
+</div>
