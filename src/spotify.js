@@ -267,6 +267,13 @@ const RETRY_MAX_ATTEMPTS = 5;
 const RETRY_BASE_MS = 1000;
 const RETRY_JITTER_FRACTION = 0.5;
 
+// Spotify can return very large Retry-After values when a rolling quota is
+// exhausted. Sleeping on one verbatim would hold one of the sync pool's two
+// worker slots for minutes or hours, behind a modal the user cannot cancel.
+// Clamp it: the playlist is recorded incomplete and repaired on a later run,
+// which is strictly better than an unbounded stall.
+const RETRY_MAX_SLEEP_MS = 30000;
+
 const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Spotify's Retry-After is authoritative when present. Otherwise back off
@@ -274,10 +281,10 @@ const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 // same window wakes at the same instant and recreates the burst that caused it.
 function computeBackoffMs(attempt, retryAfterSeconds, random = Math.random) {
     if (retryAfterSeconds !== null && retryAfterSeconds !== undefined) {
-        return Math.round(retryAfterSeconds * 1000);
+        return Math.min(Math.round(retryAfterSeconds * 1000), RETRY_MAX_SLEEP_MS);
     }
     const base = RETRY_BASE_MS * Math.pow(2, attempt - 1);
-    return Math.round(base * (1 + RETRY_JITTER_FRACTION * random()));
+    return Math.min(Math.round(base * (1 + RETRY_JITTER_FRACTION * random())), RETRY_MAX_SLEEP_MS);
 }
 
 function isRetryable(error) {
@@ -397,5 +404,6 @@ export {
     SpotifyApiError,
     __setAccessTokenForTests,
     computeBackoffMs,
-    RETRY_MAX_ATTEMPTS
+    RETRY_MAX_ATTEMPTS,
+    RETRY_MAX_SLEEP_MS
 };

@@ -464,6 +464,44 @@ test('a playlist deleted from Spotify is pruned along with its sync state', asyn
     expect(await database.getPlaylist('kept')).toBeDefined();
 });
 
+test('an empty header listing never prunes the cache', async () => {
+    // A successful-but-empty response must not be read as "you have no playlists".
+    await database.setPlaylist({ ...header('keep', '2026-07-25 Ride', 1), trackList: [makeItem('t1').item] });
+
+    const client = {
+        getUserPlaylistsPage: async ({ onApiCall }) => {
+            if (onApiCall) onApiCall({ status: 200, rateLimited: false });
+            return { items: [], total: 0, next: null };
+        },
+        getPlaylistItems: async () => ({ items: [], total: 0, next: null })
+    };
+
+    await runSync({ emit: () => {}, spotifyClient: client });
+
+    expect(await database.getPlaylist('keep')).toBeDefined();
+});
+
+test('a header listing containing nulls never prunes the cache', async () => {
+    // Spotify intermittently returns nulls here; a filtered-out playlist must not
+    // be mistaken for a deleted one.
+    await database.setPlaylist({ ...header('keep', '2026-07-25 Ride', 1), trackList: [makeItem('t1').item] });
+
+    const client = {
+        getUserPlaylistsPage: async ({ onApiCall }) => {
+            if (onApiCall) onApiCall({ status: 200, rateLimited: false });
+            return { items: [header('other', '2026-07-26 Ride', 1), null], total: 2, next: null };
+        },
+        getPlaylistItems: async (_id, { onApiCall }) => {
+            if (onApiCall) onApiCall({ status: 200, rateLimited: false });
+            return { items: [makeItem('t1')], total: 1, next: null };
+        }
+    };
+
+    await runSync({ emit: () => {}, spotifyClient: client });
+
+    expect(await database.getPlaylist('keep')).toBeDefined();
+});
+
 test('both fetch-phase totals are published before either phase starts', async () => {
     const client = makeClient({
         playlists: [header('lib', '[LIBRARY] Main', 1), header('cls', '2026-07-25 Ride', 1)],

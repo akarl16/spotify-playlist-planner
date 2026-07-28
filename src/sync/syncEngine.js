@@ -87,6 +87,7 @@ async function syncPlaylistHeaders({ emit, spotifyClient }) {
     const headers = [];
     let offset = 0;
     let more = true;
+    let sawNullEntries = false;
 
     while (more) {
         const page = await spotifyClient.getUserPlaylistsPage({
@@ -96,7 +97,9 @@ async function syncPlaylistHeaders({ emit, spotifyClient }) {
         });
 
         // Spotify intermittently returns nulls in this array.
-        headers.push(...page.items.filter((playlist) => playlist != null));
+        const pageItems = page.items.filter((playlist) => playlist != null);
+        if (pageItems.length !== page.items.length) sawNullEntries = true;
+        headers.push(...pageItems);
         offset += page.items.length;
         more = page.next !== null;
 
@@ -108,15 +111,22 @@ async function syncPlaylistHeaders({ emit, spotifyClient }) {
 
     await database.setPlaylists(headers);
 
-    // Playlists that no longer exist upstream. Pruning here rather than lazily keeps
-    // the repair queue honest — a deleted playlist can never be repaired.
-    const liveIds = new Set(headers.map((header) => header.id));
-    const staleIds = (await database.getPlaylists())
-        .map((playlist) => playlist.id)
-        .filter((id) => !liveIds.has(id));
+    // Prune only when the listing is trustworthy. Spotify intermittently returns
+    // nulls in this array, and deleting on a lossy response would destroy real
+    // playlists along with their tracks and sync state — an empty-but-successful
+    // response would wipe the entire cache. When in doubt, keep everything: a
+    // lingering stale playlist is recoverable, a deleted one is not.
+    if (headers.length > 0 && !sawNullEntries) {
+        const liveIds = new Set(headers.map((header) => header.id));
+        const staleIds = stored
+            .map((playlist) => playlist.id)
+            .filter((id) => !liveIds.has(id));
 
-    if (staleIds.length > 0) {
-        await database.deletePlaylists(staleIds);
+        if (staleIds.length > 0) {
+            await database.deletePlaylists(staleIds);
+        }
+    } else {
+        console.warn('Skipping playlist prune: header listing was empty or contained nulls');
     }
 
     localStorage.setItem(HEADERS_SYNCED_AT_KEY, String(Date.now()));

@@ -1,4 +1,4 @@
-import { SpotifyApiError, spotifyFetch, __setAccessTokenForTests, computeBackoffMs, RETRY_MAX_ATTEMPTS } from './spotify.js';
+import { SpotifyApiError, spotifyFetch, __setAccessTokenForTests, computeBackoffMs, RETRY_MAX_ATTEMPTS, RETRY_MAX_SLEEP_MS } from './spotify.js';
 
 beforeEach(() => {
     localStorage.clear();
@@ -105,6 +105,19 @@ test('backoff adds jitter so retries do not resynchronise into a fresh burst', (
 
     expect(full).toBeGreaterThan(none);
     expect(full).toBeLessThanOrEqual(none * 1.5);
+});
+
+test('a huge Retry-After is clamped rather than stalling a pool slot for hours', () => {
+    // Spotify returns values like this when a rolling quota is exhausted.
+    expect(computeBackoffMs(1, 3600, () => 0)).toBe(RETRY_MAX_SLEEP_MS);
+});
+
+test('exponential backoff is clamped at high attempt numbers', () => {
+    expect(computeBackoffMs(10, null, () => 1)).toBe(RETRY_MAX_SLEEP_MS);
+});
+
+test('a Retry-After below the ceiling is still honoured exactly', () => {
+    expect(computeBackoffMs(1, 7, () => 0)).toBe(7000);
 });
 
 test('retries a 429 and succeeds on a later attempt', async () => {
