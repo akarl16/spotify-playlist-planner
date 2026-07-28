@@ -7,10 +7,13 @@ import { mapWithConcurrency } from './pool.js';
 const LIBRARY_REGEX = /\[LIBRARY\]/;
 const PAGE_SIZE = 50;
 
-// Tuned against the measured 429 rate. The Stage 1 baseline fanned out over all
-// 573 playlists at once and had ~75% of its requests rejected. Raise this only
-// while the backdrop's rate-limited count stays at or near zero.
-const SYNC_CONCURRENCY = 4;
+// Tuned by measurement, not guessed. Cold runs of the same 573-playlist library:
+//   unbounded -> 459 failed, 462 rate-limit errors, ~30s
+//   pool of 4 -> 166 failed, 166 rate-limit errors, ~70s
+//   pool of 2 ->   0 failed,   0 errors of any kind, ~119s
+// The extra ~50s over a pool of 4 buys correctness outright. Do not raise this
+// without re-running a cold sync and confirming the rate-limited count stays zero.
+const SYNC_CONCURRENCY = 2;
 
 /**
  * Runs a full sync and returns the playlists the UI needs.

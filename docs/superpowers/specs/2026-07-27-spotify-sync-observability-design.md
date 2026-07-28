@@ -572,3 +572,41 @@ non-JSON body throws a raw `SyntaxError` from `response.json()` rather than a
 `SpotifyApiError`, so `syncState` types it `kind: 'http'`. Harmless now, but the
 headline Stage 1 finding is the purity of `byErrorKind`, and that claim should stay
 trustworthy once retry starts branching on error kind.
+
+## Stage 2 — pool-only measurement
+
+Bounded concurrency landed alone, with no retry, no token refresh, and no repair
+execution, so the change is attributable to concurrency and nothing else. Three cold
+runs against the same 573-playlist library, each from a freshly deleted IndexedDB.
+
+| Measure | Unbounded (baseline) | Pool = 4 | Pool = 2 |
+| --- | --- | --- | --- |
+| `complete` | 111 | 407 | **573** |
+| `failed` | 459 | 166 | **0** |
+| `incomplete` | 3 | 0 | **0** |
+| `byErrorKind` | `{ rate_limit: 462 }` | `{ rate_limit: 166 }` | **`{}`** |
+| Tracks stored | 7,065 | 17,311 | **21,353** |
+| Cycle Tempo | 500 / 3,390 | 3,398 / 3,398 | **3,398 / 3,398** |
+| Wall clock | ~30 s | ~70 s | 119 s |
+
+**A pool of 2 produces a completely clean sync.** Not a reduced error rate — zero
+errors of any kind, across all 573 in-scope playlists. The 58 playlists still holding
+an empty track list are the out-of-scope ones (neither library nor class), which are
+correctly never fetched.
+
+### What this changes about the plan
+
+**Retry is no longer the fix; it is insurance.** The plan ordered retry second on the
+assumption that bounded concurrency would reduce but not eliminate rate limiting. It
+eliminated it. Retry still has value — one clean run is not proof of zero 429s under
+a slower network, a larger library, or Spotify-side variability — but it is now a
+safety net rather than a correctness requirement.
+
+**The cost is wall clock.** 119 s versus ~30 s, all of it behind a blocking backdrop.
+That is the price of correctness at this pool size. A pool of 4 finishes in ~70 s but
+leaves 166 playlists damaged, which repair would then have to re-fetch on a later run
+— so the apparent saving is partly illusory.
+
+**Progress reporting held up.** The overall bar was strictly monotonic across 119
+samples, confirming both the Stage 1 fix and Task 1's change to publish both
+fetch-phase totals before either phase begins.
