@@ -134,20 +134,23 @@ function App() {
       setLibraryPlaylists(_libraryPlaylists);
       setClassPlaylists(_classPlaylists);
       setTrackLibrary(buildTrackLibrary(_libraryPlaylists, _classPlaylists, Date.now()));
+      setIsLoading(false);
     } catch (error) {
       console.error('Sync failed', error);
-      // Keep the backdrop up carrying the reason. Dropping straight to an empty
-      // table gives the user no idea anything went wrong.
+      // Deliberately does NOT clear isLoading — the backdrop has to stay mounted
+      // to carry the reason and offer a retry.
+      //
+      // This previously did `return` here with setIsLoading(false) in a `finally`.
+      // `finally` runs even on the way out of a `return`, so the backdrop unmounted
+      // regardless and a real 403 produced a silent empty table. Clearing the
+      // loading flag on the success path only is what actually keeps it up.
       emit({
         type: 'sync:error',
         cause: { kind: error?.kind ?? 'http', status: error?.status ?? 0 },
         message: error?.message ?? String(error)
       });
-      clearInterval(ticker);
-      return;
     } finally {
       clearInterval(ticker);
-      setIsLoading(false);
     }
   }, []);
 
