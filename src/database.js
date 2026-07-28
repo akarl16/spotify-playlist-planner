@@ -2,18 +2,17 @@ import * as idb from 'idb';
 
 let db;
 
+const DB_NAME = 'playlist-planner';
+const DB_VERSION = 3;
+
 async function init() {
-    db = await idb.openDB('playlist-planner', 2, {
-        upgrade
-    });
-    console.log('Successfully opened DB');
+    db = await idb.openDB(DB_NAME, DB_VERSION, { upgrade });
+    console.log(`Opened ${DB_NAME} v${DB_VERSION}`);
 }
 
-function upgrade(upgradeDb) {
-    console.log('Upgrading or Creating DB');
-    upgradeDb.onerror = () => {
-        console.error('Error loading database.');
-    };
+function upgrade(upgradeDb, oldVersion, newVersion, tx) {
+    console.log(`Upgrading DB from v${oldVersion} to v${newVersion}`);
+
     if (!upgradeDb.objectStoreNames.contains('playlists')) {
         upgradeDb.createObjectStore('playlists', { keyPath: 'id' });
     }
@@ -22,6 +21,43 @@ function upgrade(upgradeDb) {
     }
     if (!upgradeDb.objectStoreNames.contains('artists')) {
         upgradeDb.createObjectStore('artists', { keyPath: 'id' });
+    }
+    if (!upgradeDb.objectStoreNames.contains('syncState')) {
+        upgradeDb.createObjectStore('syncState', { keyPath: 'playlistId' });
+    }
+
+    if (oldVersion > 0 && oldVersion < 3) {
+        return seedSyncStateForExistingPlaylists(tx);
+    }
+}
+
+// Additive migration: reads playlists, writes syncState, never modifies a playlist
+// record. Only IDB operations are awaited — awaiting anything else would let the
+// versionchange transaction auto-close mid-migration.
+//
+// Everything is seeded 'never' rather than 'complete'. The Stage 0 audit measured
+// 78% of cached playlists as damaged, and a damaged record is indistinguishable
+// from a healthy one from the inside, so none of it is trusted.
+async function seedSyncStateForExistingPlaylists(tx) {
+    const playlistStore = tx.objectStore('playlists');
+    const syncStateStore = tx.objectStore('syncState');
+
+    const playlists = await playlistStore.getAll();
+    console.log(`Seeding sync state for ${playlists.length} existing playlists`);
+
+    for (const playlist of playlists) {
+        await syncStateStore.put({
+            playlistId: playlist.id,
+            snapshotId: null,
+            status: 'never',
+            fetchedItemCount: 0,
+            storedTrackCount: playlist.trackList?.length ?? 0,
+            tracksTotal: playlist.tracks?.total ?? null,
+            lastAttemptAt: null,
+            lastSuccessAt: null,
+            attempts: 0,
+            lastError: null
+        });
     }
 }
 
@@ -34,12 +70,14 @@ async function getPlaylists() {
 }
 
 async function setPlaylists(playlists) {
-    let tx = db.transaction('playlists', 'readwrite');
-    let store = tx.objectStore('playlists');
+    const tx = db.transaction('playlists', 'readwrite');
+    const store = tx.objectStore('playlists');
 
     for (const playlist of playlists) {
         await setPlaylistNoOverwrite(playlist, store);
     }
+
+    await tx.done;
 }
 
 async function setPlaylist(playlist) {
@@ -48,17 +86,20 @@ async function setPlaylist(playlist) {
 
 async function setPlaylistNoOverwrite(playlist, store) {
     const existingPlaylist = await store.get(playlist.id);
+
     if (!existingPlaylist) {
-        console.debug(`new playlist ${playlist.id} added to store`);
-        await store.put(playlist);
-    } else if (existingPlaylist.snapshot_id !== playlist.snapshot_id) {
-        console.debug(`updated playlist ${playlist.id} based on snapshot, clearing cached trackList`);
-        // Drop the stale trackList so getPlaylistTracks re-fetches from Spotify
-        const updated = { ...playlist, trackList: undefined };
-        await store.put(updated);
-    } else {
-        console.debug(`playlist ${playlist.id} already stored`);
+        await store.put({ ...playlist, trackList: [] });
+        return;
     }
+
+    if (existingPlaylist.snapshot_id !== playlist.snapshot_id) {
+        // Content changed upstream — drop cached tracks so the engine re-fetches.
+        await store.put({ ...playlist, trackList: [] });
+        return;
+    }
+
+    // Unchanged upstream — keep whatever tracks we already have.
+    await store.put({ ...playlist, trackList: existingPlaylist.trackList ?? [] });
 }
 
 async function clearPlaylists() {
@@ -281,4 +322,30 @@ async function clearAllData() {
     }
 }
 
-export { init, getPlaylist, getPlaylists, setPlaylist, setPlaylists, clearPlaylists, getTrackAudioFeatures, getTracksAudioFeatures, putTrackAudioFeatures, getArtist, putArtist, getStorageStats, clearAllData, getTracksNeedingBpmAnalysis }
+async function getSyncState(playlistId) {
+    return await db.get('syncState', playlistId);
+}
+
+async function getAllSyncStates() {
+    return await db.getAll('syncState');
+}
+
+async function putSyncState(state) {
+    await db.put('syncState', state);
+}
+
+async function deletePlaylists(playlistIds) {
+    const tx = db.transaction(['playlists', 'syncState'], 'readwrite');
+    for (const playlistId of playlistIds) {
+        tx.objectStore('playlists').delete(playlistId);
+        tx.objectStore('syncState').delete(playlistId);
+    }
+    await tx.done;
+}
+
+export {
+    init, getPlaylist, getPlaylists, setPlaylist, setPlaylists, clearPlaylists,
+    getTrackAudioFeatures, getTracksAudioFeatures, putTrackAudioFeatures,
+    getArtist, putArtist, getStorageStats, clearAllData, getTracksNeedingBpmAnalysis,
+    getSyncState, getAllSyncStates, putSyncState, deletePlaylists
+};
