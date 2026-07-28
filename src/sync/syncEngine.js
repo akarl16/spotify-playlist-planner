@@ -1,7 +1,7 @@
 import * as spotify from '../spotify.js';
 import * as database from '../database.js';
 import { CLASS_DATE_REGEX } from '../trackLibrary.js';
-import { recordAttempt, recordSuccess, recordFailure, getPlaylistIdsNeedingRepair } from './syncState.js';
+import { recordAttempt, recordSuccess, recordFailure, getPlaylistIdsNeedingRepair, needsSync } from './syncState.js';
 import { mapWithConcurrency } from './pool.js';
 
 const LIBRARY_REGEX = /\[LIBRARY\]/;
@@ -141,6 +141,7 @@ async function syncPlaylistBatch(headers, phase, { emit, spotifyClient }) {
 
 async function syncOnePlaylist(header, phase, { emit, spotifyClient, force = false }) {
     const existing = await database.getPlaylist(header.id);
+    const existingState = await database.getSyncState(header.id);
 
     // `.length`, NOT truthiness. An empty array means a previous run failed on the
     // first page; the old code treated [] as "already have it" and skipped these
@@ -148,7 +149,12 @@ async function syncOnePlaylist(header, phase, { emit, spotifyClient, force = fal
     //
     // `force` is how repair overrides this: a playlist under repair already holds
     // partial data, and that partial data is precisely what we are replacing.
-    if (!force && existing?.trackList?.length) {
+    //
+    // Skip only when we hold data AND the sync state says that data is current.
+    // Testing trackList.length alone would skip a playlist whose snapshot changed
+    // upstream — reporting stale tracks as a success, then quietly re-fetching the
+    // same playlist in the repair phase moments later.
+    if (!force && existing?.trackList?.length && !needsSync(existingState, header)) {
         // Still emit progress, or the phase bar would never reach its total.
         emit({
             type: 'item:success',
@@ -178,7 +184,13 @@ async function syncOnePlaylist(header, phase, { emit, spotifyClient, force = fal
     // otherwise replace a full track list with []. A successful fetch is still
     // authoritative even when shorter, since tracks can be removed upstream.
     const existingCount = existing?.trackList?.length ?? 0;
-    const keepExisting = Boolean(error) && trackList.length < existingCount;
+    // Gate on `reachedEnd`, NOT on `error`. A fetch can end incomplete without
+    // throwing — the zero-item-page guard breaks the loop with error === null — and
+    // that path would otherwise overwrite good data with []. Any outcome that did
+    // not paginate to the end is untrusted and must never shrink what is stored.
+    // A completed fetch stays authoritative even when shorter, since tracks can be
+    // removed upstream.
+    const keepExisting = !reachedEnd && trackList.length < existingCount;
     const storedTrackList = keepExisting ? existing.trackList : trackList;
 
     const playlist = { ...header, trackList: storedTrackList };

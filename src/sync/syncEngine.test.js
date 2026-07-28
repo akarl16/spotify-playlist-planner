@@ -233,32 +233,40 @@ test('repaired playlists are reflected in the returned data, not just in storage
     expect(repaired.trackList).toHaveLength(1);
 });
 
-test('the repair phase emits start, item and complete events', async () => {
-    // A non-empty trackList, unlike the []-left-by-a-failure case above: it must be
-    // the 'failed' sync state — not an empty array — that routes this playlist
-    // through repair, so the class phase's own skip predicate doesn't fix it first
-    // and rob the repair phase of the item it's meant to process.
-    await database.setPlaylist({
-        ...header('cls', '2026-07-25 Ride', 1),
-        trackList: [{ id: 'stale', name: 'Stale', artists: [], duration_ms: 1, added_at: new Date() }]
-    });
-    await database.putSyncState({
-        playlistId: 'cls', snapshotId: 's1', status: 'failed',
-        fetchedItemCount: 0, storedTrackCount: 0, tracksTotal: 1,
-        lastAttemptAt: 1, lastSuccessAt: null, attempts: 1, lastError: null
-    });
-
-    const client = makeClient({
-        playlists: [header('cls', '2026-07-25 Ride', 1)],
-        itemsByPlaylist: { cls: [makeItem('t1')] }
-    });
+test('the repair phase recovers a playlist that failed in its own phase, in the same run', async () => {
+    // Repair's real job: the class phase attempt fails, and repair re-fetches it
+    // before the run ends — so the user is not left holding a damaged playlist.
+    let attempts = 0;
+    const client = {
+        getUserPlaylistsPage: async ({ onApiCall }) => {
+            if (onApiCall) onApiCall({ status: 200, rateLimited: false });
+            return { items: [header('cls', '2026-07-25 Ride', 1, 's1')], total: 1, next: null };
+        },
+        getPlaylistItems: async (_playlistId, { onApiCall }) => {
+            attempts++;
+            if (attempts === 1) {
+                if (onApiCall) onApiCall({ status: 429, rateLimited: true });
+                throw Object.assign(new Error('rate limited'), { kind: 'rate_limit', status: 429 });
+            }
+            if (onApiCall) onApiCall({ status: 200, rateLimited: false });
+            return { items: [makeItem('t1')], total: 1, next: null };
+        }
+    };
     const events = [];
 
     await runSync({ emit: (e) => events.push(e), spotifyClient: client });
 
+    // The class phase saw the failure...
+    expect(events.some(e => e.type === 'item:error' && e.phase === 'class')).toBe(true);
+
+    // ...and repair fixed it before the run finished.
     expect(events.some(e => e.type === 'phase:start' && e.phase === 'repair')).toBe(true);
     expect(events.some(e => e.type === 'item:success' && e.phase === 'repair')).toBe(true);
     expect(events.some(e => e.type === 'phase:complete' && e.phase === 'repair')).toBe(true);
+
+    expect(attempts).toBe(2);
+    expect((await database.getPlaylist('cls')).trackList).toHaveLength(1);
+    expect((await database.getSyncState('cls')).status).toBe(SYNC_STATUS.COMPLETE);
 });
 
 test('a playlist already complete at the current snapshot is not repaired', async () => {
@@ -343,6 +351,13 @@ test('a cached playlist still advances phase progress to its total', async () =>
     await database.setPlaylist({
         ...header('cls', '2026-07-25 Ride', 1),
         trackList: [{ id: 'cached', name: 'Cached', artists: [], duration_ms: 1, added_at: new Date() }]
+    });
+    // A cache hit now requires a sync state that is COMPLETE at this snapshot, not
+    // merely the presence of tracks — otherwise stale data reads as a success.
+    await database.putSyncState({
+        playlistId: 'cls', snapshotId: 's1', status: 'complete',
+        fetchedItemCount: 1, storedTrackCount: 1, tracksTotal: 1,
+        lastAttemptAt: 1, lastSuccessAt: 1, attempts: 1, lastError: null
     });
 
     const client = makeClient({
@@ -535,4 +550,79 @@ test('a partial repair that fetched MORE than was stored does replace it', async
 
     // 50 fetched beats 1 stored, so the better partial wins.
     expect((await database.getPlaylist('lib')).trackList).toHaveLength(50);
+});
+
+test('a malformed zero-item page does not destroy already-stored tracks', async () => {
+    // fetchAllPlaylistItems ends incomplete WITHOUT throwing here, so a guard keyed
+    // on `error` alone would let [] overwrite good data.
+    const stored = Array.from({ length: 25 }, (_, i) => ({
+        id: `t${i}`, added_at: new Date(), name: `Track ${i}`, artists: [], duration_ms: 1000
+    }));
+    await database.setPlaylist({ ...header('cls', '2026-07-25 Ride', 25, 'snap-OLD'), trackList: stored });
+    await database.putSyncState({
+        playlistId: 'cls', snapshotId: 'snap-OLD', status: 'complete',
+        fetchedItemCount: 25, storedTrackCount: 25, tracksTotal: 25,
+        lastAttemptAt: 1, lastSuccessAt: 1, attempts: 1, lastError: null
+    });
+
+    const client = {
+        getUserPlaylistsPage: async ({ onApiCall }) => {
+            if (onApiCall) onApiCall({ status: 200, rateLimited: false });
+            return { items: [header('cls', '2026-07-25 Ride', 25, 'snap-NEW')], total: 1, next: null };
+        },
+        // Pathological: claims more pages exist but returns nothing, without throwing.
+        getPlaylistItems: async (_id, { onApiCall }) => {
+            if (onApiCall) onApiCall({ status: 200, rateLimited: false });
+            return { items: [], total: 25, next: 'more' };
+        }
+    };
+
+    await runSync({ emit: () => {}, spotifyClient: client });
+
+    expect((await database.getPlaylist('cls')).trackList).toHaveLength(25);
+    expect((await database.getSyncState('cls')).status).not.toBe(SYNC_STATUS.COMPLETE);
+});
+
+test('a playlist whose snapshot changed is re-fetched in its own phase, not skipped as cached', async () => {
+    const stored = [{ id: 'old', added_at: new Date(), name: 'Old', artists: [], duration_ms: 1000 }];
+    await database.setPlaylist({ ...header('cls', '2026-07-25 Ride', 1, 'snap-OLD'), trackList: stored });
+    await database.putSyncState({
+        playlistId: 'cls', snapshotId: 'snap-OLD', status: 'complete',
+        fetchedItemCount: 1, storedTrackCount: 1, tracksTotal: 1,
+        lastAttemptAt: 1, lastSuccessAt: 1, attempts: 1, lastError: null
+    });
+
+    const client = makeClient({
+        playlists: [header('cls', '2026-07-25 Ride', 1, 'snap-NEW')],
+        itemsByPlaylist: { cls: [makeItem('fresh')] }
+    });
+    const events = [];
+
+    await runSync({ emit: (e) => events.push(e), spotifyClient: client });
+
+    // Fetched for real in the class phase — not reported as a cache hit.
+    const classEvents = events.filter(e => e.phase === 'class' && e.playlistId === 'cls');
+    expect(classEvents.some(e => e.type === 'item:success' && e.cached)).toBe(false);
+    expect((await database.getPlaylist('cls')).trackList[0].id).toBe('fresh');
+});
+
+test('a playlist complete at the CURRENT snapshot is still skipped as cached', async () => {
+    const stored = [{ id: 'keep', added_at: new Date(), name: 'Keep', artists: [], duration_ms: 1000 }];
+    await database.setPlaylist({ ...header('cls', '2026-07-25 Ride', 1, 'snap-SAME'), trackList: stored });
+    await database.putSyncState({
+        playlistId: 'cls', snapshotId: 'snap-SAME', status: 'complete',
+        fetchedItemCount: 1, storedTrackCount: 1, tracksTotal: 1,
+        lastAttemptAt: 1, lastSuccessAt: 1, attempts: 1, lastError: null
+    });
+
+    const client = makeClient({
+        playlists: [header('cls', '2026-07-25 Ride', 1, 'snap-SAME')],
+        itemsByPlaylist: { cls: [makeItem('unused')] }
+    });
+    const spy = jest.spyOn(client, 'getPlaylistItems');
+
+    await runSync({ emit: () => {}, spotifyClient: client });
+
+    expect(spy).not.toHaveBeenCalled();
+    expect((await database.getPlaylist('cls')).trackList[0].id).toBe('keep');
 });
