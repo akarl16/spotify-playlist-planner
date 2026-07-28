@@ -127,6 +127,18 @@ one of these is corrected in Stage 2.
 **Stage 2 — fix.** Retry, backoff, bounded concurrency, token refresh, header
 staleness, pruning, repair pass. Re-run and compare against the Stage 1 baseline.
 
+Decisions taken after the Stage 1 baseline:
+
+- **Pool size is a fixed named constant, starting at 4.** Not adaptive. The
+  instrumentation already reports the 429 rate directly, so tuning is a matter of
+  re-running at different values and reading the number off the backdrop. Ship
+  whichever value measures clean.
+- **Repair executes as the final phase of the same run**, behind the same backdrop.
+  One code path, and the user ends a single pass holding correct data. This forces
+  fixing the `runSync`-snapshot trap, which has to be handled regardless.
+- **Retry is turned on only after concurrency is bounded.** Retrying into a
+  saturated limiter extends the storm; the pool has to come down first.
+
 ### Stage 0 — zero-code audit
 
 Before either stage, the existing IndexedDB contents can be read directly from a
