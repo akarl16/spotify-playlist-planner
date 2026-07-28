@@ -164,3 +164,36 @@ test('the stats line stays reachable when there are hundreds of failures', async
     expect(screen.getByTestId('stat-failed')).toHaveTextContent('300');
     expect(screen.getByRole('button', { name: /hide details/i })).toBeInTheDocument();
 });
+
+test('a fatal error is surfaced with its cause and a retry control', async () => {
+    const state = apply([
+        { type: 'sync:start', at: 0 },
+        { type: 'phase:start', phase: 'headers', total: 10 },
+        { type: 'sync:error', cause: { kind: 'rate_limit', status: 429 }, message: 'Spotify API error: 429' }
+    ]);
+    const onRetry = jest.fn();
+    render(<SyncBackdrop telemetry={state} onRetry={onRetry} />);
+
+    expect(screen.getByTestId('sync-fatal-error')).toBeInTheDocument();
+    expect(screen.getByText('Sync stopped')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: /try again/i }));
+    expect(onRetry).toHaveBeenCalledTimes(1);
+});
+
+test('the overall bar ignores the headers phase so it cannot jump backwards', () => {
+    // headers counts playlists DISCOVERED (different unit); library/class count fetched.
+    const state = apply([
+        { type: 'sync:start', at: 0 },
+        { type: 'phase:start', phase: 'headers', total: 600 },
+        { type: 'phase:progress', phase: 'headers', done: 600, total: 600 },
+        { type: 'phase:complete', phase: 'headers', at: 5 },
+        { type: 'phase:progress', phase: 'library', total: 10 },
+        { type: 'phase:progress', phase: 'class', total: 90 },
+        { type: 'phase:start', phase: 'library', total: 10 }
+    ]);
+    render(<SyncBackdrop telemetry={state} />);
+
+    // 0 of 100 fetch-phase items done — NOT 100% from the completed headers phase.
+    expect(screen.getAllByRole('progressbar')[0]).toHaveAttribute('aria-valuenow', '0');
+});

@@ -135,6 +135,21 @@ test('phase:complete marks the phase done', () => {
     expect(state.phases.find(p => p.key === 'headers').status).toBe('complete');
 });
 
+test('sync:error stops the run and records the cause', () => {
+    const state = apply([
+        { type: 'sync:start', at: 0 },
+        { type: 'phase:start', phase: 'headers', total: 10 },
+        { type: 'sync:error', cause: { kind: 'rate_limit', status: 429 }, message: 'Spotify API error: 429' }
+    ]);
+
+    expect(state.running).toBe(false);
+    expect(state.fatalError).toEqual({ kind: 'rate_limit', status: 429, message: 'Spotify API error: 429' });
+});
+
+test('initial telemetry has no fatal error', () => {
+    expect(initialTelemetry().fatalError).toBeNull();
+});
+
 test('tick updates elapsedMs while running', () => {
     const state = apply([{ type: 'sync:start', at: 1000 }, { type: 'tick', at: 4500 }]);
 

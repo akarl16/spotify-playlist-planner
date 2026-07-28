@@ -19,14 +19,15 @@ async function runSync({ emit, spotifyClient = spotify }) {
 
     const headers = await syncPlaylistHeaders({ emit, spotifyClient });
 
-    for (const header of headers) {
-        header.isClassPlaylist = CLASS_DATE_REGEX.test(header.name);
-    }
-
     const libraryHeaders = headers.filter(
         (playlist) => LIBRARY_REGEX.test(playlist.name) || LIBRARY_REGEX.test(playlist.description ?? '')
     );
     const classHeaders = headers.filter((playlist) => CLASS_DATE_REGEX.test(playlist.name));
+
+    // Publish both totals before either phase starts. Without this the overall bar's
+    // denominator grows as each phase begins, making it jump backwards mid-sync.
+    emit({ type: 'phase:progress', phase: 'library', total: libraryHeaders.length });
+    emit({ type: 'phase:progress', phase: 'class', total: classHeaders.length });
 
     const libraryPlaylists = await syncPlaylistBatch(libraryHeaders, 'library', { emit, spotifyClient });
     libraryPlaylists.sort((a, b) => a.name.localeCompare(b.name));

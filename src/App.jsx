@@ -136,6 +136,15 @@ function App() {
       setTrackLibrary(buildTrackLibrary(_libraryPlaylists, _classPlaylists, Date.now()));
     } catch (error) {
       console.error('Sync failed', error);
+      // Keep the backdrop up carrying the reason. Dropping straight to an empty
+      // table gives the user no idea anything went wrong.
+      emit({
+        type: 'sync:error',
+        cause: { kind: error?.kind ?? 'http', status: error?.status ?? 0 },
+        message: error?.message ?? String(error)
+      });
+      clearInterval(ticker);
+      return;
     } finally {
       clearInterval(ticker);
       setIsLoading(false);
@@ -609,7 +618,7 @@ function App() {
       <Stack className="App" spacing={1}>
         {console.debug("Render")}
         {isLoading ? (
-          <SyncBackdrop telemetry={telemetry} />
+          <SyncBackdrop telemetry={telemetry} onRetry={getData} />
         )
           : isSpotifyAuthorized ? (
             <Fragment>

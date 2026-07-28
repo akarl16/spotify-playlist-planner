@@ -106,9 +106,9 @@ async function setPlaylistNoOverwrite(playlist, store) {
 }
 
 async function clearPlaylists() {
-    let tx = db.transaction('playlists', 'readwrite');
-    let store = tx.objectStore('playlists');
-    await store.clear();
+    const tx = db.transaction('playlists', 'readwrite');
+    await tx.objectStore('playlists').clear();
+    await tx.done;
 }
 
 async function getTrackAudioFeatures(trackId) {
@@ -313,10 +313,11 @@ async function getTracksNeedingBpmAnalysis() {
  */
 async function clearAllData() {
     try {
-        let tx = db.transaction(['playlists', 'tracksAudioFeatures', 'artists'], 'readwrite');
+        let tx = db.transaction(['playlists', 'tracksAudioFeatures', 'artists', 'syncState'], 'readwrite');
         await tx.objectStore('playlists').clear();
         await tx.objectStore('tracksAudioFeatures').clear();
         await tx.objectStore('artists').clear();
+        await tx.objectStore('syncState').clear();
         await tx.done;
         console.log('All data cleared');
     } catch (error) {

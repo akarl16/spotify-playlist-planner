@@ -263,3 +263,21 @@ test('a legitimately empty playlist is recorded complete', async () => {
 
     expect((await database.getSyncState('cls')).status).toBe('complete');
 });
+
+test('both fetch-phase totals are published before either phase starts', async () => {
+    const client = makeClient({
+        playlists: [header('lib', '[LIBRARY] Main', 1), header('cls', '2026-07-25 Ride', 1)],
+        itemsByPlaylist: { lib: [makeItem('t1')], cls: [makeItem('t2')] }
+    });
+    const events = [];
+
+    await runSync({ emit: (e) => events.push(e), spotifyClient: client });
+
+    const firstLibraryStart = events.findIndex(e => e.type === 'phase:start' && e.phase === 'library');
+    const classTotalPublished = events.findIndex(e => e.type === 'phase:progress' && e.phase === 'class');
+
+    // The class total must be known before the library phase begins, or the overall
+    // bar's denominator grows mid-sync and the bar jumps backwards.
+    expect(classTotalPublished).toBeGreaterThanOrEqual(0);
+    expect(classTotalPublished).toBeLessThan(firstLibraryStart);
+});

@@ -23,14 +23,17 @@ function formatElapsed(ms) {
     return `${minutes}:${String(seconds).padStart(2, '0')}`;
 }
 
+// The overall bar tracks only the two fetch phases. Their totals are both known
+// before either starts (see syncEngine), so the denominator is fixed and the bar
+// only ever moves forward. The headers phase is excluded: it counts playlists
+// discovered rather than fetched — a different unit — and has its own row and bar.
+// Repair is excluded because it does no work in this stage.
+const OVERALL_PHASE_KEYS = ['library', 'class'];
+
 function overallProgress(phases) {
-    // Only phases that have actually started are counted. The repair phase does no
-    // work in this stage but still reports a queue size covering the whole in-scope
-    // library, so including it would peg a fully successful sync at ~68%. Filtering
-    // on status also stays correct once repair does execute — it leaves 'pending'.
-    const started = phases.filter((phase) => phase.status !== 'pending');
-    const total = started.reduce((sum, phase) => sum + phase.total, 0);
-    const done = started.reduce((sum, phase) => sum + phase.done, 0);
+    const counted = phases.filter((phase) => OVERALL_PHASE_KEYS.includes(phase.key));
+    const total = counted.reduce((sum, phase) => sum + phase.total, 0);
+    const done = counted.reduce((sum, phase) => sum + phase.done, 0);
     return total === 0 ? 0 : Math.round((done / total) * 100);
 }
 
@@ -57,9 +60,9 @@ function FeedRow({ entry }) {
     );
 }
 
-function SyncBackdrop({ telemetry }) {
+function SyncBackdrop({ telemetry, onRetry }) {
     const [expanded, setExpanded] = useState(false);
-    const { phases, feed, stats, incomplete, elapsedMs } = telemetry;
+    const { phases, feed, stats, incomplete, elapsedMs, fatalError } = telemetry;
     const activePhaseKey = phases.find((phase) => phase.status === 'active')?.key;
 
     return (
@@ -77,10 +80,35 @@ function SyncBackdrop({ telemetry }) {
                 maxHeight: '90vh',
                 overflowY: 'auto',
             }}>
-                <Typography id="sync-backdrop-title" sx={{ fontSize: 19, fontWeight: 700 }}>Syncing your library…</Typography>
+                <Typography id="sync-backdrop-title" sx={{ fontSize: 19, fontWeight: 700 }}>
+                    {fatalError ? 'Sync stopped' : 'Syncing your library…'}
+                </Typography>
                 <Typography sx={{ fontSize: 13, color: 'rgba(255,255,255,0.55)', mb: 1.5 }}>
                     Elapsed {formatElapsed(elapsedMs)}
                 </Typography>
+
+                {fatalError && (
+                    <Box
+                        data-testid="sync-fatal-error"
+                        sx={{
+                            backgroundColor: 'rgba(255,82,82,0.10)', borderLeft: `3px solid ${RED}`,
+                            px: 1.4, py: 1.1, borderRadius: '5px', fontSize: 12.5, mb: 1.5
+                        }}
+                    >
+                        <Box sx={{ color: '#ff8a8a', fontWeight: 700 }}>Sync failed</Box>
+                        <Box sx={{ opacity: 0.8, mt: 0.5 }}>
+                            {describeCause(fatalError, 0, null)} — {fatalError.message}
+                        </Box>
+                        {onRetry && (
+                            <Button
+                                onClick={onRetry}
+                                sx={{ mt: 1, color: GREEN, textTransform: 'none', fontSize: 12.5 }}
+                            >
+                                Try again
+                            </Button>
+                        )}
+                    </Box>
+                )}
 
                 <LinearProgress
                     variant="determinate"

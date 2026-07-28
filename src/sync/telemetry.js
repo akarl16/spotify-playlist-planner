@@ -25,7 +25,8 @@ function initialTelemetry() {
         })),
         feed: [],
         stats: { apiCalls: 0, rateLimited: 0, failed: 0, tracksCached: 0 },
-        incomplete: []
+        incomplete: [],
+        fatalError: null
     };
 }
 
@@ -149,6 +150,17 @@ function reduceTelemetry(state, event) {
                 }
             };
         }
+
+        case 'sync:error':
+            return {
+                ...state,
+                running: false,
+                fatalError: {
+                    kind: event.cause?.kind ?? 'http',
+                    status: event.cause?.status ?? 0,
+                    message: event.message ?? 'Sync failed'
+                }
+            };
 
         default:
             return state;
