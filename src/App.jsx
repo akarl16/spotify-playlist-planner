@@ -18,11 +18,9 @@ import { faSpotify } from '@fortawesome/free-brands-svg-icons';
 import AppBar from "@mui/material/AppBar";
 import Toolbar from '@mui/material/Toolbar';
 import Typography from '@mui/material/Typography';
-import Backdrop from "@mui/material/Backdrop";
 import Badge from "@mui/material/Badge";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button"
-import CircularProgress from "@mui/material/CircularProgress";
 import IconButton from "@mui/material/IconButton";
 import Tooltip from "@mui/material/Tooltip";
 import Autocomplete from '@mui/material/Autocomplete';
@@ -37,6 +35,10 @@ import Fab from '@mui/material/Fab';
 import "json.date-extensions";
 import * as spotify from "./spotify.js";
 import * as database from "./database.js";
+import { runSync } from './sync/syncEngine.js';
+import { initialTelemetry, reduceTelemetry } from './sync/telemetry.js';
+import { buildTrackLibrary } from './trackLibrary.js';
+import SyncBackdrop from './components/SyncBackdrop.jsx';
 
 // Create a dark theme for Material-UI
 const darkTheme = createTheme({
@@ -76,14 +78,7 @@ function App() {
   const [isSpotifyAuthorized, setIsSpotifyAuthorized] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [playlistToPlan, setPlaylistToPlan] = useState();
-  const [loadState, setLoadState] = useState({
-    playlistHeaderCount: 0,
-    playlistHeaderTotal: 0,
-    playlistDetailsCount: 0,
-    playlistDetailsTotal: 0,
-    isLoading: false,
-    loadMessage: ""
-  });
+  const [telemetry, setTelemetry] = useState(initialTelemetry());
   const [isPlaying, setIsPlaying] = useState(false);
   // eslint-disable-next-line no-unused-vars
   const [playTrackUri, setPlayTrackUri] = useState([]);
@@ -105,18 +100,6 @@ function App() {
       .catch(console.error);;
   }, []);
 
-  useEffect(() => {
-    async function fetchData() {
-      console.log('fetching data');
-      await getData();
-      setIsLoading(false);
-    }
-    if (isSpotifyAuthorized) {
-      fetchData();
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isSpotifyAuthorized])
-
   // #endregion
 
   // #region util functions
@@ -126,8 +109,6 @@ function App() {
     var seconds = ((millis % 60000) / 1000).toFixed(0);
     return minutes + ":" + (seconds < 10 ? "0" : "") + seconds;
   };
-
-  const sleep = ms => new Promise(r => setTimeout(r, ms));
 
   const durationToMillis = (duration) => {
     const durationParts = duration.split(":");
@@ -139,290 +120,42 @@ function App() {
   // #endregion
 
   // #region data load functions
-  const getPlaylistHeaders = async () => {
-    let playlistHeaders = [];
+  const getData = useCallback(async () => {
+    setIsLoading(true);
 
-    playlistHeaders = await database.getPlaylists();
+    // Engine events are pushed through the pure reducer; React only ever sees
+    // the reduced view state.
+    const emit = (event) => setTelemetry((current) => reduceTelemetry(current, event));
+    const ticker = setInterval(() => emit({ type: 'tick', at: Date.now() }), 1000);
 
-    if (playlistHeaders && playlistHeaders.length > 0) {
-      console.debug("Found playlists in local storage");
-    } else {
-      console.debug("No playlists in storage");
-      playlistHeaders = await retrievePlaylistHeaders();
-      database.setPlaylists(playlistHeaders);
+    try {
+      const { libraryPlaylists: _libraryPlaylists, classPlaylists: _classPlaylists } = await runSync({ emit });
+
+      setLibraryPlaylists(_libraryPlaylists);
+      setClassPlaylists(_classPlaylists);
+      setTrackLibrary(buildTrackLibrary(_libraryPlaylists, _classPlaylists, Date.now()));
+    } catch (error) {
+      console.error('Sync failed', error);
+    } finally {
+      clearInterval(ticker);
+      setIsLoading(false);
     }
+  }, []);
 
-    return playlistHeaders;
-  };
-
-  async function retrievePlaylistHeaders() {
-    let playlistHeaders = [];
-    var offset = 0;
-    var more = true;
-
-    while (more) {
-      const spotifyApi = await spotify.getSpotifyApi();
-      const _playlistsResult = await spotifyApi.getUserPlaylists({
-        limit: 50,
-        offset: offset
-      });
-
-      playlistHeaders.push(..._playlistsResult.items.filter((playlist) => playlist != null)); //Filter out nulls since Spotify likes to send those
-      more = _playlistsResult.next !== null;
-      offset = offset + _playlistsResult.items.length;
-      loadState.playlistHeaderCount = playlistHeaders.length;
-      loadState.playlistHeaderTotal = _playlistsResult.total;
-      loadState.isLoading = true;
-      loadState.loadMessage = `${loadState.playlistHeaderCount}/${loadState.playlistHeaderTotal} Playlist headers`;
-      setLoadState({ ...loadState });
+  useEffect(() => {
+    if (isSpotifyAuthorized) {
+      getData();
     }
-    loadState.isLoading = false;
-    setLoadState({ ...loadState });
-    return playlistHeaders;
-  }
-
-  const getPlaylistTracks = async (_playlistHeaders) => {
-    var loaded = 0;
-    loadState.playlistDetailsCount = loaded;
-    loadState.playlistDetailsTotal = _playlistHeaders.length;
-    loadState.isLoading = true;
-    loadState.loadMessage = `${loadState.playlistDetailsCount}/${loadState.playlistDetailsTotal} Playlist details`;
-    setLoadState({ ...loadState });
-    const playlists = await Promise.all(
-      _playlistHeaders.map(async (playlistHeader) => {
-        if (!playlistHeader.trackList?.length) {
-          console.debug(`Populating tracklist for playlist ${playlistHeader.id}`);
-          playlistHeader.trackList = await retrievePlaylistTracks(playlistHeader.id);
-          database.setPlaylist(playlistHeader);
-        }
-        loadState.playlistDetailsCount = ++loaded;
-        loadState.playlistDetailsTotal = _playlistHeaders.length;
-        loadState.isLoading = true;
-        loadState.loadMessage = `${loadState.playlistDetailsCount}/${loadState.playlistDetailsTotal} Playlist details`;
-        setLoadState({ ...loadState });
-        return playlistHeader;
-      })
-    );
-    return playlists;
-  };
-
-  const retrievePlaylistTracks = async (_playlistId) => {
-    console.debug("Retrieving tracks");
-    const tracks = [];
-    var more = true;
-    var offset = 0;
-
-    while (more) {
-      try {
-        const tracksResult = await spotify.getPlaylistItems(_playlistId, {
-          limit: 50,
-          offset: offset
-        });
-        tracks.push(...tracksResult.items);
-        more = tracksResult.next !== null;
-        offset = offset + tracksResult.items.length;
-      } catch (e) {
-        console.warn("Error retrieving playlist tracks");
-
-        if (e.status === 429) {
-          console.warn("Rate limit exceeded");
-          await sleep(6000);
-          continue; //Retry
-        } else {
-          console.error(e);
-          break;
-        }
-      }
-    }
-    return tracks
-      .filter((entry) => entry?.item?.id != null)  // skip nulls (unavailable tracks, local files, episodes)
-      .map((entry) => {
-        return {
-          id: entry.item.id,
-          added_at: new Date(entry.added_at),
-          name: entry.item.name,
-          artists: entry.item.artists,
-          duration_ms: entry.item.duration_ms
-        };
-      });
-  };
-
-  // eslint-disable-next-line no-unused-vars
-  const getTracksAudioFeatures = async (trackIds) => {
-    const audioFeaturesMap = new Map();
-    const retrieveTrackIds = [];
-    for (const trackId of trackIds) {
-      const trackAudioFeatures = await database.getTrackAudioFeatures(trackId);
-      if (!trackAudioFeatures) {
-        retrieveTrackIds.push(trackId);
-      } else {
-        audioFeaturesMap.set(trackAudioFeatures.id, trackAudioFeatures);
-      }
-    }
-    if (retrieveTrackIds.length > 0) {
-      const retrievedTracksAudioFeatures = await retrieveTracksAudioFeatures(retrieveTrackIds);
-      for (const trackAudioFeatures of retrievedTracksAudioFeatures) {
-        if (trackAudioFeatures && trackAudioFeatures.id) {
-          database.putTrackAudioFeatures(trackAudioFeatures);
-          audioFeaturesMap.set(trackAudioFeatures.id, trackAudioFeatures);
-        }
-      }
-    }
-    return audioFeaturesMap;
-  }
-
-  const retrieveTracksAudioFeatures = async (trackIds) => {
-    console.debug(`Retrieving tracks ${trackIds}`);
-    const batchSize = 100;
-    const spotifyApi = await spotify.getSpotifyApi();
-    const tracks = [];
-    for (let i = 0; i < trackIds.length; i += batchSize) {
-      const batch = trackIds.slice(i, i += batchSize);
-      try {
-        const getResult = await spotifyApi.getAudioFeaturesForTracks(batch);
-        if (getResult.audio_features && getResult.audio_features.length > 0) {
-          // Filter out null/undefined values from Spotify API response
-          tracks.push(...getResult.audio_features.filter(feature => feature !== null && feature !== undefined));
-        } else {
-          console.error(`Error retrieving tracks for ${trackIds}`);
-          console.error(getResult);
-        }
-      } catch (e) {
-        console.warn("Error retrieving audio features");
-        console.error(e);
-      }
-    }
-    return tracks;
-  }
-
-  const buildTrackLibrary = async (libraryPlaylists, classPlaylists) => {
-    const today = new Date().getTime();
-    const todayMinus7 = today - 7 * 1000 * 60 * 60 * 24;
-    const todayMinus30 = today - 30 * 1000 * 60 * 60 * 24;
-    const todayMinus90 = today - 90 * 1000 * 60 * 60 * 24;
-    const todayMinus180 = today - 180 * 1000 * 60 * 60 * 24;
-    const trackMap = new Map();
-
-    //Add class play details
-    for (const libraryPlaylist of libraryPlaylists) {
-      for (const libraryTrack of libraryPlaylist.trackList) {
-        var track = libraryTrack;
-        if (trackMap.has(libraryTrack.id)) {
-          track = trackMap.get(libraryTrack.id);
-          track.lists += "," + libraryPlaylist.name;
-        } else {
-          track.recencyScore = 0;
-          track.plays = [];
-          track.lists = libraryPlaylist.name;
-          trackMap.set(track.id, track);
-        }
-      }
-    }
-
-    const trackList = Array.from(trackMap.values());
-
-    //Calculate recency score
-    const _dateRegex = /([12]\d{3}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01]))/;
-    
-    for (const classPlaylist of classPlaylists) {
-      const classDateMatch = _dateRegex.exec(classPlaylist.name);
-      const playlistDate = classDateMatch ? new Date(classDateMatch[1]).getTime() : null;
-
-      for (const playlistTrack of classPlaylist.trackList) {
-        if (trackMap.has(playlistTrack.id)) {
-          const track = trackMap.get(playlistTrack.id);
-          track.plays.push(playlistTrack);
-          
-          const playDate = playlistDate || playlistTrack.added_at.getTime();
-          if (playlistDate) {
-            // override the added_at so the UI shows the real class date as the played date
-            playlistTrack.added_at = new Date(playlistDate);
-          }
-
-          if (playDate > todayMinus7) {
-            track.recencyScore += 10;
-            playlistTrack.recencyScore = 10;
-          } else if (playDate > todayMinus30) {
-            track.recencyScore += 5;
-            playlistTrack.recencyScore = 5;
-          } else if (playDate > todayMinus90) {
-            track.recencyScore += 2;
-            playlistTrack.recencyScore = 2;
-          } else if (playDate > todayMinus180) {
-            track.recencyScore += 1;
-            playlistTrack.recencyScore = 1;
-          } else {
-            track.recencyScore += 0;
-            playlistTrack.recencyScore = 0;
-          }
-        }
-      }
-    }
-
-    //Add track audio details - DISABLED
-    // const tracksAudioDetails = await getTracksAudioFeatures(trackList.map(track => track.id));
-    // for (const track of trackList) {
-    //   track.audio_features = tracksAudioDetails.get(track.id);
-    // }
-
-    trackList.sort(
-      (a, b) => (a.recencyScore - b.recencyScore || b.added_at - a.added_at)
-    );
-    return trackList;
-  };
+  }, [isSpotifyAuthorized, getData]);
 
   const refreshData = async () => {
-    database.setPlaylists(await retrievePlaylistHeaders());
-    setTrackLibrary(null);
+    setTrackLibrary([]);
     await getData();
   };
 
   const refreshAuthorization = async () => {
     spotify.authorizeSpotify();
   }
-
-  const getData = async () => {
-    setIsLoading(true);
-    const _dateRegex = /([12]\d{3}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01]))/;
-    const _libraryRegex = /\[LIBRARY\]/;
-
-    const _playlistHeaders = await getPlaylistHeaders();
-    console.debug("GOT PLAYLIST HEADERS");
-
-    _playlistHeaders.sort((a, b) => a.name - b.name);
-    for (const cpl of _playlistHeaders) {
-      cpl.isClassPlaylist = _dateRegex.test(cpl.name);
-    }
-
-    const _libraryPlaylistHeaders = _playlistHeaders.filter(
-      (playlist) =>
-        _libraryRegex.test(playlist.name) ||
-        _libraryRegex.test(playlist.description)
-    );
-
-    const _classPlaylistHeaders = _playlistHeaders.filter((playlist) =>
-      _dateRegex.test(playlist.name)
-    );
-
-    const _libraryPlaylists = await getPlaylistTracks(_libraryPlaylistHeaders);
-    _libraryPlaylists.sort((a, b) => a.name.localeCompare(b.name));
-    const _classPlaylists = await getPlaylistTracks(_classPlaylistHeaders);
-    _classPlaylists.sort((a, b) => b.name.localeCompare(a.name));
-
-    console.debug("Library playlists");
-    console.debug(_libraryPlaylistHeaders);
-    console.debug("Class playlists");
-    console.debug(_classPlaylistHeaders);
-
-    const _trackLibrary = await buildTrackLibrary(_libraryPlaylists, _classPlaylists);
-    console.debug("Track library");
-    console.debug(_trackLibrary);
-
-    setClassPlaylists(_classPlaylists);
-    setLibraryPlaylists(_libraryPlaylists);
-    setTrackLibrary(_trackLibrary);
-    setIsLoading(false);
-  };
   // #endregion
 
   // #region runtime action functions
@@ -876,19 +609,7 @@ function App() {
       <Stack className="App" spacing={1}>
         {console.debug("Render")}
         {isLoading ? (
-          <Backdrop className="Loader" open={true}>
-            <Box sx={{ textAlign: 'center' }}>
-              <CircularProgress size={60} sx={{ color: '#1DB954', mb: 2 }} />
-              <Typography variant="h6" sx={{ color: '#FFFFFF', fontWeight: 600 }}>
-                Loading your playlists...
-              </Typography>
-              {loadState.loadMessage && (
-                <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.7)', mt: 1 }}>
-                  {loadState.loadMessage}
-                </Typography>
-              )}
-            </Box>
-          </Backdrop>
+          <SyncBackdrop telemetry={telemetry} />
         )
           : isSpotifyAuthorized ? (
             <Fragment>
