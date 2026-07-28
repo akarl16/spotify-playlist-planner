@@ -452,3 +452,85 @@ megabytes — still negligible.
 benefit it carried (removing the `buildTrackLibrary` mutation bug) is achieved
 directly and more cheaply, and dropping it shrinks the riskiest part of the
 migration to nothing — the v3 upgrade no longer rewrites all 628 playlist records.
+
+## Stage 1 baseline
+
+Measured 2026-07-28 on `localhost:3002` against a genuinely cold IndexedDB (fresh v3
+database, nothing cached). The engine ran with all five Stage 1 defects intact —
+unbounded fan-out, no retry, no repair execution.
+
+Authentication note: port 3000 was occupied, and it holds the only registered
+localhost redirect URI. The session was obtained by authorising on the Vercel origin
+(a registered URI) and moving the resulting refresh token to the localhost origin.
+The refresh grant does not involve `redirect_uri`, so this needs no dashboard change.
+
+### Outcome
+
+| Measure | Value |
+| --- | --- |
+| Playlists discovered | 631 (13 header requests) |
+| In scope (library + class) | 573 |
+| `complete` | **111** |
+| `incomplete` (partial) | **3** |
+| `failed` (zero tracks) | **459** |
+| Total failures | **462 of 573 — 81 %** |
+| Tracks stored | 7,065 |
+| Tracks missing vs `tracks.total` | 14,299 |
+| Playlists left holding `[]` | 517 |
+| IndexedDB usage | 4.47 MB |
+| Request latency p50 / p95 / max | 425 ms / 643 ms / 717 ms |
+
+### The finding
+
+**Every single failure was `rate_limit`. All 462 of them.**
+
+```
+byErrorKind: { rate_limit: 462 }
+```
+
+Zero `auth`, zero `network`, zero other HTTP. Token expiry — listed in the original
+diagnosis as a co-equal cause — contributed nothing. The typed-error work from Task 3
+is what makes this statement possible; previously every failure was an untyped
+`Error` and indistinguishable.
+
+**459 of 462 failures stopped at zero tracks.** Only 3 playlists truncated
+mid-pagination. This confirms Mode A as overwhelmingly dominant and matches Stage 0
+exactly: small playlists make one request, that request is rate-limited, and `[]` is
+stored.
+
+**A cold sync reproduces six months of accumulated production damage in about half a
+minute.** Stage 0 measured 445 damaged playlists in a cache built up over months;
+this run produced 462 from scratch. The damage was never gradual accumulation — it
+is what a single unthrottled sync does every time.
+
+### API call volume
+
+Resource Timing caps at 250 entries so the browser-side count is truncated. Derived
+from sync state: 13 header requests + 459 single-request failures + ~141 pages for
+the 111 complete playlists + partials ≈ **610 requests, of which 462 (roughly 75 %)
+returned 429.**
+
+### What this determines for Stage 2
+
+1. **Bounded concurrency is the entire fix.** With one cause accounting for 100 % of
+   failures, retry and a worker pool are not two of several improvements — they are
+   the work. Everything else on the Stage 2 list is hygiene.
+2. **Retry alone would be insufficient and possibly harmful.** Retrying 462 requests
+   into an already-saturated rate limiter extends the storm. Concurrency must come
+   down first, with retry as the safety net.
+3. **Pool sizing.** 573 playlists at ~425 ms p50 gives roughly 244 s of serial work.
+   A pool of 4–8 targets 30–60 s while staying far below the burst that produced a
+   75 % rejection rate. Start at 4 and raise it only if the observed 429 rate stays
+   near zero.
+4. **Token refresh is lower priority than assumed.** No auth failure occurred in a
+   ~30 s run. It still matters once bounded concurrency stretches a sync past the
+   one-hour token lifetime — which is a new risk created by the fix, not an existing
+   one.
+
+### UI defect found by this run
+
+The expanded details panel rendered all 462 incomplete entries unbounded, pushing the
+stats line and the collapse control off screen. Unit tests missed it because they
+supply a single failure. Fixed: the list renders 8 rows plus an "…and N more"
+summary, and the panel is capped at `90vh` with scroll. `telemetry.incomplete` still
+holds every entry — only the rendering is capped.
