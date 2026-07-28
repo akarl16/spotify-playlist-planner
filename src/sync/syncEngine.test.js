@@ -215,3 +215,51 @@ test('filters out null items, local files, and episodes', async () => {
 
     expect((await database.getPlaylist('lib')).trackList).toHaveLength(1);
 });
+
+test('a cached playlist still advances phase progress to its total', async () => {
+    await database.setPlaylist({
+        ...header('cls', '2026-07-25 Ride', 1),
+        trackList: [{ id: 'cached', name: 'Cached', artists: [], duration_ms: 1, added_at: new Date() }]
+    });
+
+    const client = makeClient({
+        playlists: [header('cls', '2026-07-25 Ride', 1)],
+        itemsByPlaylist: { cls: [makeItem('t1')] }
+    });
+    const events = [];
+
+    await runSync({ emit: (e) => events.push(e), spotifyClient: client });
+
+    const success = events.find(e => e.type === 'item:success' && e.playlistId === 'cls');
+    expect(success).toMatchObject({ cached: true, trackCount: 1 });
+});
+
+test('a zero-item page with a non-null next terminates instead of spinning', async () => {
+    const client = {
+        getUserPlaylistsPage: async ({ onApiCall }) => {
+            if (onApiCall) onApiCall({ status: 200, rateLimited: false });
+            return { items: [header('lib', '[LIBRARY] Main', 10)], total: 1, next: null };
+        },
+        // Pathological: claims more pages exist but returns nothing.
+        getPlaylistItems: async (_playlistId, { onApiCall }) => {
+            if (onApiCall) onApiCall({ status: 200, rateLimited: false });
+            return { items: [], total: 10, next: 'more' };
+        }
+    };
+
+    await runSync({ emit: () => {}, spotifyClient: client });
+
+    // Terminated, and did not claim success.
+    expect((await database.getSyncState('lib')).status).not.toBe('complete');
+});
+
+test('a legitimately empty playlist is recorded complete', async () => {
+    const client = makeClient({
+        playlists: [header('cls', '2026-07-25 Ride', 0)],
+        itemsByPlaylist: { cls: [] }
+    });
+
+    await runSync({ emit: () => {}, spotifyClient: client });
+
+    expect((await database.getSyncState('cls')).status).toBe('complete');
+});

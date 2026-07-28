@@ -95,6 +95,10 @@ function reduceTelemetry(state, event) {
                 ...withPhase,
                 stats: { ...withPhase.stats, tracksCached: withPhase.stats.tracksCached + event.trackCount }
             };
+            // A cache hit advances progress and counts toward tracks cached, but is
+            // deliberately kept out of the feed — with hundreds of already-synced
+            // playlists it would drown the rows describing actual work.
+            if (event.cached) return withStats;
             return pushFeed(withStats, {
                 playlistId: event.playlistId,
                 name: event.name,

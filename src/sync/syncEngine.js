@@ -102,6 +102,16 @@ async function syncOnePlaylist(header, phase, { emit, spotifyClient }) {
     // first page; the old code treated [] as "already have it" and skipped these
     // forever, which is how 440 playlists ended up permanently empty.
     if (existing?.trackList?.length) {
+        // Still emit progress, or the phase bar would never reach its total.
+        emit({
+            type: 'item:success',
+            phase,
+            playlistId: header.id,
+            name: header.name,
+            trackCount: existing.trackList.length,
+            durationMs: 0,
+            cached: true
+        });
         return existing;
     }
 
@@ -182,6 +192,14 @@ async function fetchAllPlaylistItems(playlistId, phase, { emit, spotifyClient })
         }
 
         fetchedItemCount += page.items.length;
+
+        // A zero-item page cannot advance `offset`, so a non-null `next` here would
+        // spin forever. A legitimately empty playlist returns next === null and is
+        // still a completed pagination.
+        if (page.items.length === 0) {
+            reachedEnd = page.next === null;
+            break;
+        }
 
         for (const entry of page.items) {
             // Nulls, local files, unavailable tracks, and podcast episodes.

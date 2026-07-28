@@ -148,6 +148,18 @@ test('sync:complete stops the run', () => {
     expect(state.elapsedMs).toBe(5000);
 });
 
+test('a cached item:success advances progress without adding a feed row', () => {
+    const state = apply([
+        { type: 'sync:start', at: 0 },
+        { type: 'phase:start', phase: 'library', total: 2 },
+        { type: 'item:success', phase: 'library', playlistId: 'a', name: 'A', trackCount: 46, durationMs: 0, cached: true }
+    ]);
+
+    expect(state.phases.find(p => p.key === 'library').done).toBe(1);
+    expect(state.stats.tracksCached).toBe(46);
+    expect(state.feed).toHaveLength(0);
+});
+
 test('unknown events pass through without changing state', () => {
     const before = apply([{ type: 'sync:start', at: 0 }]);
     const after = reduceTelemetry(before, { type: 'nonsense' });
