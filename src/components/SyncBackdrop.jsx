@@ -11,6 +11,11 @@ const GREEN = '#1DB954';
 const AMBER = '#ffaa00';
 const RED = '#ff5252';
 
+// Display caps. A real run produces hundreds of failures and dozens of feed rows;
+// telemetry keeps them all, the panel shows a readable slice.
+const MAX_FEED_ROWS = 6;
+const MAX_INCOMPLETE_ROWS = 8;
+
 function formatElapsed(ms) {
     const totalSeconds = Math.floor(ms / 1000);
     const minutes = Math.floor(totalSeconds / 60);
@@ -67,7 +72,11 @@ function SyncBackdrop({ telemetry }) {
             // visual illusion and Tab escapes into the app underneath.
             sx={{ zIndex: 1300, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
         >
-            <Box sx={{ backgroundColor: '#121212', borderRadius: '10px', p: 3.5, width: 560, maxWidth: '92vw' }}>
+            <Box sx={{
+                backgroundColor: '#121212', borderRadius: '10px', p: 3.5, width: 560, maxWidth: '92vw',
+                maxHeight: '90vh',
+                overflowY: 'auto',
+            }}>
                 <Typography id="sync-backdrop-title" sx={{ fontSize: 19, fontWeight: 700 }}>Syncing your library…</Typography>
                 <Typography sx={{ fontSize: 13, color: 'rgba(255,255,255,0.55)', mb: 1.5 }}>
                     Elapsed {formatElapsed(elapsedMs)}
@@ -130,7 +139,7 @@ function SyncBackdrop({ telemetry }) {
                             {/* The feed nests under the ACTIVE phase so the phase list stays the spine. */}
                             {expanded && phase.key === activePhaseKey && feed.length > 0 && (
                                 <Box sx={{ backgroundColor: 'rgba(0,0,0,0.35)', borderRadius: '6px', px: 1.4, py: 0.9, mt: 1.1 }}>
-                                    {feed.slice(0, 6).map((entry, index) => (
+                                    {feed.slice(0, MAX_FEED_ROWS).map((entry, index) => (
                                         <FeedRow key={`${entry.playlistId}-${index}`} entry={entry} />
                                     ))}
                                 </Box>
@@ -159,11 +168,16 @@ function SyncBackdrop({ telemetry }) {
                                 <Box sx={{ color: '#ff8a8a', fontWeight: 700 }}>
                                     {incomplete.length} playlist{incomplete.length === 1 ? '' : 's'} incomplete
                                 </Box>
-                                {incomplete.map((entry) => (
+                                {incomplete.slice(0, MAX_INCOMPLETE_ROWS).map((entry) => (
                                     <Box key={entry.playlistId} sx={{ opacity: 0.8, mt: 0.5 }}>
                                         {entry.name} — {describeCause(entry.cause, entry.storedTrackCount, entry.tracksTotal)}
                                     </Box>
                                 ))}
+                                {incomplete.length > MAX_INCOMPLETE_ROWS && (
+                                    <Box data-testid="incomplete-overflow" sx={{ opacity: 0.6, mt: 0.6, fontStyle: 'italic' }}>
+                                        …and {incomplete.length - MAX_INCOMPLETE_ROWS} more
+                                    </Box>
+                                )}
                                 <Box sx={{ opacity: 0.65, mt: 0.6, fontSize: 11.5 }}>
                                     Marked incomplete in storage; the repair phase will re-fetch them.
                                 </Box>

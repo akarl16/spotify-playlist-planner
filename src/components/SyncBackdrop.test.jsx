@@ -123,3 +123,44 @@ test('the dialog is exposed as a modal dialog to assistive technology', () => {
     expect(screen.getByRole('presentation')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /show details/i })).toBeInTheDocument();
 });
+
+test('a run with hundreds of failures caps the incomplete list and reports the overflow', async () => {
+    const events = [
+        { type: 'sync:start', at: 0 },
+        { type: 'phase:start', phase: 'class', total: 300 }
+    ];
+    for (let i = 0; i < 300; i++) {
+        events.push({
+            type: 'item:error', phase: 'class', playlistId: `p${i}`, name: `Playlist ${i}`,
+            cause: { kind: 'rate_limit', status: 429 }, storedTrackCount: 0, tracksTotal: 20
+        });
+    }
+    render(<SyncBackdrop telemetry={apply(events)} />);
+
+    await userEvent.click(screen.getByRole('button', { name: /show details/i }));
+
+    // 8 rendered, the rest summarised.
+    expect(screen.getByTestId('incomplete-overflow')).toHaveTextContent('…and 292 more');
+    expect(screen.getByText(/300 playlists incomplete/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Playlist 99 —/)).not.toBeInTheDocument();
+});
+
+test('the stats line stays reachable when there are hundreds of failures', async () => {
+    const events = [
+        { type: 'sync:start', at: 0 },
+        { type: 'phase:start', phase: 'class', total: 300 }
+    ];
+    for (let i = 0; i < 300; i++) {
+        events.push({
+            type: 'item:error', phase: 'class', playlistId: `p${i}`, name: `Playlist ${i}`,
+            cause: { kind: 'rate_limit', status: 429 }, storedTrackCount: 0, tracksTotal: 20
+        });
+    }
+    render(<SyncBackdrop telemetry={apply(events)} />);
+
+    await userEvent.click(screen.getByRole('button', { name: /show details/i }));
+
+    // Previously pushed off-screen by the unbounded list.
+    expect(screen.getByTestId('stat-failed')).toHaveTextContent('300');
+    expect(screen.getByRole('button', { name: /hide details/i })).toBeInTheDocument();
+});
