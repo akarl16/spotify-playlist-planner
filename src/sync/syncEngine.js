@@ -2,9 +2,15 @@ import * as spotify from '../spotify.js';
 import * as database from '../database.js';
 import { CLASS_DATE_REGEX } from '../trackLibrary.js';
 import { recordAttempt, recordSuccess, recordFailure, getPlaylistIdsNeedingRepair } from './syncState.js';
+import { mapWithConcurrency } from './pool.js';
 
 const LIBRARY_REGEX = /\[LIBRARY\]/;
 const PAGE_SIZE = 50;
+
+// Tuned against the measured 429 rate. The Stage 1 baseline fanned out over all
+// 573 playlists at once and had ~75% of its requests rejected. Raise this only
+// while the backdrop's rate-limited count stays at or near zero.
+const SYNC_CONCURRENCY = 4;
 
 /**
  * Runs a full sync and returns the playlists the UI needs.
@@ -86,10 +92,10 @@ async function syncPlaylistHeaders({ emit, spotifyClient }) {
 async function syncPlaylistBatch(headers, phase, { emit, spotifyClient }) {
     emit({ type: 'phase:start', phase, total: headers.length, at: Date.now() });
 
-    // STAGE 1: unbounded fan-out, exactly as today. This is the single largest
-    // contributor to the 429 rate and the baseline needs to capture it.
-    const playlists = await Promise.all(
-        headers.map((header) => syncOnePlaylist(header, phase, { emit, spotifyClient }))
+    const playlists = await mapWithConcurrency(
+        headers,
+        SYNC_CONCURRENCY,
+        (header) => syncOnePlaylist(header, phase, { emit, spotifyClient })
     );
 
     emit({ type: 'phase:complete', phase, at: Date.now() });

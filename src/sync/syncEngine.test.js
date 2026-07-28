@@ -155,6 +155,31 @@ test('STAGE 1: does not retry after a 429 — one attempt per playlist', async (
     expect(spy).toHaveBeenCalledTimes(2);
 });
 
+test('playlist fetching is bounded by the concurrency limit', async () => {
+    let inFlight = 0;
+    let peak = 0;
+    const playlists = Array.from({ length: 20 }, (_, i) => header(`p${i}`, `2026-01-${String(i + 1).padStart(2, '0')} Ride`, 1));
+    const itemsByPlaylist = Object.fromEntries(playlists.map(p => [p.id, [makeItem('t1')]]));
+
+    const client = makeClient({ playlists, itemsByPlaylist });
+    const original = client.getPlaylistItems;
+    client.getPlaylistItems = async (...args) => {
+        inFlight++;
+        peak = Math.max(peak, inFlight);
+        try {
+            await new Promise((r) => setTimeout(r, 2));
+            return await original(...args);
+        } finally {
+            inFlight--;
+        }
+    };
+
+    await runSync({ emit: () => {}, spotifyClient: client });
+
+    expect(peak).toBeLessThanOrEqual(4);
+    expect(peak).toBeGreaterThan(1);
+});
+
 test('STAGE 1: repair phase reports its queue but does not execute', async () => {
     const items = Array.from({ length: 120 }, (_, i) => makeItem('t' + i));
     const client = makeClient({
