@@ -15,7 +15,11 @@ function headersAreFresh(storedCount) {
     if (storedCount === 0) return false;
     const syncedAt = Number(localStorage.getItem(HEADERS_SYNCED_AT_KEY));
     if (!Number.isFinite(syncedAt) || syncedAt === 0) return false;
-    return Date.now() - syncedAt < HEADER_STALENESS_MS;
+    // A negative age means the clock moved backwards or the stamp is from the
+    // future. Treat that as stale: degrading toward a redundant fetch is safe,
+    // degrading toward a silent skip is how playlists go missing.
+    const age = Date.now() - syncedAt;
+    return age >= 0 && age < HEADER_STALENESS_MS;
 }
 
 // Tuned by measurement, not guessed. Cold runs of the same 573-playlist library:
@@ -50,16 +54,23 @@ async function runSync({ emit, spotifyClient = spotify }) {
     emit({ type: 'phase:progress', phase: 'class', total: classHeaders.length });
 
     const libraryPlaylists = await syncPlaylistBatch(libraryHeaders, 'library', { emit, spotifyClient });
-    libraryPlaylists.sort((a, b) => a.name.localeCompare(b.name));
-
     const classPlaylists = await syncPlaylistBatch(classHeaders, 'class', { emit, spotifyClient });
-    classPlaylists.sort((a, b) => b.name.localeCompare(a.name));
 
-    await reportRepairQueue([...libraryHeaders, ...classHeaders], { emit });
+    const repaired = await runRepairPhase([...libraryHeaders, ...classHeaders], { emit, spotifyClient });
+
+    // Fold repaired records back in, or the UI would render pre-repair data until
+    // the next reload.
+    const merge = (playlists) => playlists.map((playlist) => repaired.get(playlist.id) ?? playlist);
+
+    const mergedLibrary = merge(libraryPlaylists);
+    const mergedClass = merge(classPlaylists);
+
+    mergedLibrary.sort((a, b) => a.name.localeCompare(b.name));
+    mergedClass.sort((a, b) => b.name.localeCompare(a.name));
 
     emit({ type: 'sync:complete', at: Date.now() });
 
-    return { libraryPlaylists, classPlaylists };
+    return { libraryPlaylists: mergedLibrary, classPlaylists: mergedClass };
 }
 
 async function syncPlaylistHeaders({ emit, spotifyClient }) {
@@ -128,13 +139,16 @@ async function syncPlaylistBatch(headers, phase, { emit, spotifyClient }) {
     return playlists;
 }
 
-async function syncOnePlaylist(header, phase, { emit, spotifyClient }) {
+async function syncOnePlaylist(header, phase, { emit, spotifyClient, force = false }) {
     const existing = await database.getPlaylist(header.id);
 
     // `.length`, NOT truthiness. An empty array means a previous run failed on the
     // first page; the old code treated [] as "already have it" and skipped these
     // forever, which is how 440 playlists ended up permanently empty.
-    if (existing?.trackList?.length) {
+    //
+    // `force` is how repair overrides this: a playlist under repair already holds
+    // partial data, and that partial data is precisely what we are replacing.
+    if (!force && existing?.trackList?.length) {
         // Still emit progress, or the phase bar would never reach its total.
         emit({
             type: 'item:success',
@@ -255,20 +269,30 @@ async function fetchAllPlaylistItems(playlistId, phase, { emit, spotifyClient })
     return { trackList, fetchedItemCount, reachedEnd, error };
 }
 
-// STAGE 1: reports what WOULD be repaired without repairing it. Executing here
-// would fix the damage mid-baseline and destroy the measurement.
-async function reportRepairQueue(inScopeHeaders, { emit }) {
+// Re-fetches everything not known-good: incomplete, failed, never verified, or
+// sitting at a stale snapshot. After the v3 migration that is the whole library,
+// which is deliberate — a damaged playlist is indistinguishable from a healthy one
+// from the inside, so none of the pre-existing cache is trusted.
+async function runRepairPhase(inScopeHeaders, { emit, spotifyClient }) {
     // Only library + class headers. The migration seeded syncState for ALL 628
     // stored playlists, including the 58 that are neither and are never fetched
     // by design — passing every header would inflate the repair queue with
     // playlists that are not damaged, just out of scope.
     const headersById = Object.fromEntries(inScopeHeaders.map((header) => [header.id, header]));
     const needingRepair = await getPlaylistIdsNeedingRepair(headersById);
+    const headers = needingRepair.map((id) => headersById[id]).filter(Boolean);
 
-    // phase:progress, not phase:start — the phase must stay visually `pending`
-    // while still reporting its queue size, since it does no work in stage 1.
-    emit({ type: 'phase:progress', phase: 'repair', total: needingRepair.length });
-    return needingRepair;
+    emit({ type: 'phase:start', phase: 'repair', total: headers.length, at: Date.now() });
+
+    const repaired = await mapWithConcurrency(
+        headers,
+        SYNC_CONCURRENCY,
+        (header) => syncOnePlaylist(header, 'repair', { emit, spotifyClient, force: true })
+    );
+
+    emit({ type: 'phase:complete', phase: 'repair', at: Date.now() });
+
+    return new Map(repaired.map((playlist) => [playlist.id, playlist]));
 }
 
 export { runSync };

@@ -123,10 +123,17 @@ test('a playlist holding an EMPTY trackList is re-fetched, not skipped', async (
     expect((await database.getSyncState('cls')).status).toBe(SYNC_STATUS.COMPLETE);
 });
 
-test('a playlist that already has tracks is not re-fetched', async () => {
+test('a playlist that already has tracks and a verified sync state is not re-fetched', async () => {
+    // Verified (COMPLETE, matching snapshot) is what keeps a cached playlist out of
+    // the repair phase — without it, "never verified" would sweep it back in.
     await database.setPlaylist({
         ...header('cls', '2026-07-25 Ride', 1),
         trackList: [{ id: 'cached', name: 'Cached', artists: [], duration_ms: 1, added_at: new Date() }]
+    });
+    await database.putSyncState({
+        playlistId: 'cls', snapshotId: 's1', status: SYNC_STATUS.COMPLETE,
+        fetchedItemCount: 1, storedTrackCount: 1, tracksTotal: 1,
+        lastAttemptAt: 1, lastSuccessAt: 1, attempts: 1, lastError: null
     });
 
     const client = makeClient({
@@ -141,7 +148,7 @@ test('a playlist that already has tracks is not re-fetched', async () => {
     expect((await database.getPlaylist('cls')).trackList[0].id).toBe('cached');
 });
 
-test('STAGE 1: does not retry after a 429 — one attempt per playlist', async () => {
+test('a 429 causes no inline retry — each attempt, including repair, makes exactly one pass', async () => {
     const items = Array.from({ length: 120 }, (_, i) => makeItem('t' + i));
     const client = makeClient({
         playlists: [header('lib', '[LIBRARY] Main', 120)],
@@ -152,8 +159,11 @@ test('STAGE 1: does not retry after a 429 — one attempt per playlist', async (
 
     await runSync({ emit: () => {}, spotifyClient: client });
 
-    // offset 0 succeeds, offset 50 throws, loop breaks. Exactly two calls.
-    expect(spy).toHaveBeenCalledTimes(2);
+    // offset 0 succeeds, offset 50 throws, loop breaks: two calls per attempt.
+    // The initial batch phase makes one attempt (2 calls); the repair phase, which
+    // now runs within the same sync, forces exactly one more attempt on the
+    // resulting incomplete playlist (2 more calls). Neither attempt retries inline.
+    expect(spy).toHaveBeenCalledTimes(4);
 });
 
 test('playlist fetching is bounded by the concurrency limit', async () => {
@@ -181,22 +191,109 @@ test('playlist fetching is bounded by the concurrency limit', async () => {
     expect(peak).toBeGreaterThan(1);
 });
 
-test('STAGE 1: repair phase reports its queue but does not execute', async () => {
-    const items = Array.from({ length: 120 }, (_, i) => makeItem('t' + i));
+test('the repair phase re-fetches a playlist left empty by an earlier failure', async () => {
+    await database.setPlaylist({ ...header('cls', '2026-07-25 Ride', 1), trackList: [] });
+    await database.putSyncState({
+        playlistId: 'cls', snapshotId: 's1', status: 'failed',
+        fetchedItemCount: 0, storedTrackCount: 0, tracksTotal: 1,
+        lastAttemptAt: 1, lastSuccessAt: null, attempts: 1,
+        lastError: { kind: 'rate_limit', status: 429, message: '429' }
+    });
+
     const client = makeClient({
-        playlists: [header('lib', '[LIBRARY] Main', 120)],
-        itemsByPlaylist: { lib: items },
-        failOn: { lib: { atOffset: 50, status: 429, kind: 'rate_limit' } }
+        playlists: [header('cls', '2026-07-25 Ride', 1)],
+        itemsByPlaylist: { cls: [makeItem('t1')] }
+    });
+
+    await runSync({ emit: () => {}, spotifyClient: client });
+
+    expect((await database.getPlaylist('cls')).trackList).toHaveLength(1);
+    expect((await database.getSyncState('cls')).status).toBe(SYNC_STATUS.COMPLETE);
+});
+
+test('repaired playlists are reflected in the returned data, not just in storage', async () => {
+    // The snapshot trap: runSync used to build its return value before repair ran,
+    // so the UI showed pre-repair data until the next reload.
+    await database.setPlaylist({ ...header('cls', '2026-07-25 Ride', 1), trackList: [] });
+    await database.putSyncState({
+        playlistId: 'cls', snapshotId: 's1', status: 'failed',
+        fetchedItemCount: 0, storedTrackCount: 0, tracksTotal: 1,
+        lastAttemptAt: 1, lastSuccessAt: null, attempts: 1,
+        lastError: { kind: 'rate_limit', status: 429, message: '429' }
+    });
+
+    const client = makeClient({
+        playlists: [header('cls', '2026-07-25 Ride', 1)],
+        itemsByPlaylist: { cls: [makeItem('t1')] }
+    });
+
+    const result = await runSync({ emit: () => {}, spotifyClient: client });
+
+    const repaired = result.classPlaylists.find(p => p.id === 'cls');
+    expect(repaired.trackList).toHaveLength(1);
+});
+
+test('the repair phase emits start, item and complete events', async () => {
+    // A non-empty trackList, unlike the []-left-by-a-failure case above: it must be
+    // the 'failed' sync state — not an empty array — that routes this playlist
+    // through repair, so the class phase's own skip predicate doesn't fix it first
+    // and rob the repair phase of the item it's meant to process.
+    await database.setPlaylist({
+        ...header('cls', '2026-07-25 Ride', 1),
+        trackList: [{ id: 'stale', name: 'Stale', artists: [], duration_ms: 1, added_at: new Date() }]
+    });
+    await database.putSyncState({
+        playlistId: 'cls', snapshotId: 's1', status: 'failed',
+        fetchedItemCount: 0, storedTrackCount: 0, tracksTotal: 1,
+        lastAttemptAt: 1, lastSuccessAt: null, attempts: 1, lastError: null
+    });
+
+    const client = makeClient({
+        playlists: [header('cls', '2026-07-25 Ride', 1)],
+        itemsByPlaylist: { cls: [makeItem('t1')] }
     });
     const events = [];
 
     await runSync({ emit: (e) => events.push(e), spotifyClient: client });
 
-    const repairProgress = events.find(e => e.type === 'phase:progress' && e.phase === 'repair');
-    expect(repairProgress.total).toBe(1);
-    // No work was done in the repair phase, and it never claimed to be running.
-    expect(events.some(e => e.phase === 'repair' && e.type === 'item:start')).toBe(false);
-    expect(events.some(e => e.phase === 'repair' && e.type === 'phase:start')).toBe(false);
+    expect(events.some(e => e.type === 'phase:start' && e.phase === 'repair')).toBe(true);
+    expect(events.some(e => e.type === 'item:success' && e.phase === 'repair')).toBe(true);
+    expect(events.some(e => e.type === 'phase:complete' && e.phase === 'repair')).toBe(true);
+});
+
+test('a playlist already complete at the current snapshot is not repaired', async () => {
+    const client = makeClient({
+        playlists: [header('cls', '2026-07-25 Ride', 1)],
+        itemsByPlaylist: { cls: [makeItem('t1')] }
+    });
+
+    await runSync({ emit: () => {}, spotifyClient: client });
+    const spy = jest.spyOn(client, 'getPlaylistItems');
+    await runSync({ emit: () => {}, spotifyClient: client });
+
+    expect(spy).not.toHaveBeenCalled();
+});
+
+test('repair forces a re-fetch even though the playlist already holds partial data', async () => {
+    // The skip predicate must not veto repair — the partial data is the problem.
+    const items = Array.from({ length: 120 }, (_, i) => makeItem(`t${i}`));
+    await database.setPlaylist({
+        ...header('lib', '[LIBRARY] Main', 120),
+        trackList: items.slice(0, 50).map(e => ({ id: e.item.id, added_at: new Date(), name: e.item.name, artists: [], duration_ms: 1 }))
+    });
+    await database.putSyncState({
+        playlistId: 'lib', snapshotId: 's1', status: 'incomplete',
+        fetchedItemCount: 50, storedTrackCount: 50, tracksTotal: 120,
+        lastAttemptAt: 1, lastSuccessAt: null, attempts: 1,
+        lastError: { kind: 'rate_limit', status: 429, message: '429' }
+    });
+
+    const client = makeClient({ playlists: [header('lib', '[LIBRARY] Main', 120)], itemsByPlaylist: { lib: items } });
+
+    await runSync({ emit: () => {}, spotifyClient: client });
+
+    expect((await database.getPlaylist('lib')).trackList).toHaveLength(120);
+    expect((await database.getSyncState('lib')).status).toBe(SYNC_STATUS.COMPLETE);
 });
 
 test('splits playlists into library and class buckets', async () => {
@@ -316,6 +413,21 @@ test('headers are not re-fetched while the stored set is fresh', async () => {
     await runSync({ emit: () => {}, spotifyClient: client });
 
     expect(spy).not.toHaveBeenCalled();
+});
+
+test('a future headers timestamp is treated as stale, not fresh', async () => {
+    await database.setPlaylists([header('old', '2026-01-01 Ride', 1)]);
+    localStorage.setItem('headers_synced_at', String(Date.now() + 60 * 60 * 1000));
+
+    const client = makeClient({
+        playlists: [header('old', '2026-01-01 Ride', 1)],
+        itemsByPlaylist: { old: [makeItem('t1')] }
+    });
+    const spy = jest.spyOn(client, 'getUserPlaylistsPage');
+
+    await runSync({ emit: () => {}, spotifyClient: client });
+
+    expect(spy).toHaveBeenCalled();
 });
 
 test('a playlist deleted from Spotify is pruned along with its sync state', async () => {
