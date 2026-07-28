@@ -93,3 +93,33 @@ test('expanded stats line reports api calls and rate limits', async () => {
     expect(screen.getByTestId('stat-apiCalls')).toHaveTextContent('2');
     expect(screen.getByTestId('stat-rateLimited')).toHaveTextContent('1');
 });
+
+test('the overall bar reaches 100% when every executing phase is done', () => {
+    // The repair phase reports a large queue but never runs in this stage; counting
+    // it would peg a fully successful sync well short of 100%.
+    const state = apply([
+        { type: 'sync:start', at: 0 },
+        { type: 'phase:start', phase: 'headers', total: 2 },
+        { type: 'item:success', phase: 'headers', playlistId: 'h1', name: 'H1', trackCount: 0, durationMs: 1 },
+        { type: 'item:success', phase: 'headers', playlistId: 'h2', name: 'H2', trackCount: 0, durationMs: 1 },
+        { type: 'phase:complete', phase: 'headers', at: 10 },
+        { type: 'phase:start', phase: 'library', total: 1 },
+        { type: 'item:success', phase: 'library', playlistId: 'l1', name: 'L1', trackCount: 5, durationMs: 1 },
+        { type: 'phase:complete', phase: 'library', at: 20 },
+        { type: 'phase:progress', phase: 'repair', total: 570 }
+    ]);
+
+    render(<SyncBackdrop telemetry={state} />);
+
+    const bars = screen.getAllByRole('progressbar');
+    expect(bars[0]).toHaveAttribute('aria-valuenow', '100');
+});
+
+test('the dialog is exposed as a modal dialog to assistive technology', () => {
+    render(<SyncBackdrop telemetry={cleanRun} />);
+
+    // Backdrop gave no dialog role and no focus trap, so "blocks the app" was only
+    // visual. This pins the stronger primitive.
+    expect(screen.getByRole('presentation')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /show details/i })).toBeInTheDocument();
+});

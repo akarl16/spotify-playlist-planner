@@ -1,5 +1,5 @@
 import React, { useState, Fragment } from 'react';
-import Backdrop from '@mui/material/Backdrop';
+import Modal from '@mui/material/Modal';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Typography from '@mui/material/Typography';
@@ -19,8 +19,13 @@ function formatElapsed(ms) {
 }
 
 function overallProgress(phases) {
-    const total = phases.reduce((sum, phase) => sum + phase.total, 0);
-    const done = phases.reduce((sum, phase) => sum + phase.done, 0);
+    // Only phases that have actually started are counted. The repair phase does no
+    // work in this stage but still reports a queue size covering the whole in-scope
+    // library, so including it would peg a fully successful sync at ~68%. Filtering
+    // on status also stays correct once repair does execute — it leaves 'pending'.
+    const started = phases.filter((phase) => phase.status !== 'pending');
+    const total = started.reduce((sum, phase) => sum + phase.total, 0);
+    const done = started.reduce((sum, phase) => sum + phase.done, 0);
     return total === 0 ? 0 : Math.round((done / total) * 100);
 }
 
@@ -53,18 +58,17 @@ function SyncBackdrop({ telemetry }) {
     const activePhaseKey = phases.find((phase) => phase.status === 'active')?.key;
 
     return (
-        <Backdrop
+        <Modal
             className="Loader"
             open={true}
-            sx={{ zIndex: 1300 }}
-            // MUI hardcodes aria-hidden="true" on the Backdrop root, which would hide
-            // the whole dialog (including the "Show details" button) from the
-            // accessibility tree and break role-based queries/keyboard users. This is a
-            // real, interactive dialog, so un-hide it.
-            slotProps={{ root: { 'aria-hidden': false } }}
+            aria-labelledby="sync-backdrop-title"
+            // Modal (unlike Backdrop) traps focus, marks the page behind inert, and
+            // exposes role="dialog" — without which "blocks the app" is only a
+            // visual illusion and Tab escapes into the app underneath.
+            sx={{ zIndex: 1300, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
         >
             <Box sx={{ backgroundColor: '#121212', borderRadius: '10px', p: 3.5, width: 560, maxWidth: '92vw' }}>
-                <Typography sx={{ fontSize: 19, fontWeight: 700 }}>Syncing your library…</Typography>
+                <Typography id="sync-backdrop-title" sx={{ fontSize: 19, fontWeight: 700 }}>Syncing your library…</Typography>
                 <Typography sx={{ fontSize: 13, color: 'rgba(255,255,255,0.55)', mb: 1.5 }}>
                     Elapsed {formatElapsed(elapsedMs)}
                 </Typography>
@@ -191,7 +195,7 @@ function SyncBackdrop({ telemetry }) {
                     {expanded ? '▴ Hide details' : '▾ Show details'}
                 </Button>
             </Box>
-        </Backdrop>
+        </Modal>
     );
 }
 
