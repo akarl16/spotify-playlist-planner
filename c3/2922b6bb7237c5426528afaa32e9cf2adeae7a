@@ -1,0 +1,19 @@
+src/sync/featuresLoader.test.js
+  s_4775184bff5254::t_8bf2d17c8dc623 112-127
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "c32922b6bb7237c5426528afaa32e9cf2adeae7a",
+  "prompts": {},
+  "sessions": {
+    "s_4775184bff5254": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d5c0ba4f-f0f7-467c-97a4-4be516889692",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Adam Karl <akarl16@gmail.com>"
+    }
+  }
+}
