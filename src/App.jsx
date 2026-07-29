@@ -39,6 +39,8 @@ import { runSync } from './sync/syncEngine.js';
 import { initialTelemetry, reduceTelemetry } from './sync/telemetry.js';
 import { buildTrackLibrary } from './trackLibrary.js';
 import SyncBackdrop from './components/SyncBackdrop.jsx';
+import { loadTrackFeatures } from './sync/featuresLoader.js';
+import TempoProgressChip from './components/TempoProgressChip.jsx';
 
 // Create a dark theme for Material-UI
 const darkTheme = createTheme({
@@ -82,6 +84,12 @@ function App() {
   const [isPlaying, setIsPlaying] = useState(false);
   // eslint-disable-next-line no-unused-vars
   const [playTrackUri, setPlayTrackUri] = useState([]);
+  const [tempoProgress, setTempoProgress] = useState(null);
+  // Features arrive per batch but are flushed to the table on a timer — 179
+  // rebuilds of a 7,000-row virtualised grid would jank while scrolling.
+  const pendingTempoRef = React.useRef(new Map());
+  // Bumped on every new run so an in-flight loader can tell it has been superseded.
+  const tempoRunRef = React.useRef(0);
   // const scrollTrigger = useScrollTrigger({
   //   disableHysteresis: true,
   //   threshold: 0,
@@ -120,6 +128,54 @@ function App() {
   // #endregion
 
   // #region data load functions
+  const flushPendingTempo = useCallback(() => {
+    if (pendingTempoRef.current.size === 0) return;
+
+    const pending = pendingTempoRef.current;
+    pendingTempoRef.current = new Map();
+
+    setTrackLibrary((rows) =>
+      rows.map((row) => (pending.has(row.id) ? { ...row, tempo: pending.get(row.id).tempo } : row))
+    );
+  }, []);
+
+  const startBackgroundTempoLoad = useCallback((playlists) => {
+    const runId = ++tempoRunRef.current;
+    const isCancelled = () => tempoRunRef.current !== runId;
+
+    const trackIds = Array.from(new Set(
+      playlists.flatMap((playlist) => (playlist.trackList ?? []).map((track) => track?.id).filter(Boolean))
+    ));
+
+    setTempoProgress({ running: true, batchesDone: 0, batchesTotal: 0, failedBatches: 0, added: 0 });
+    const flushTimer = setInterval(flushPendingTempo, 2000);
+
+    loadTrackFeatures({
+      trackIds,
+      isCancelled,
+      onProgress: ({ batchesDone, batchesTotal, failedBatches, features }) => {
+        if (isCancelled()) return;
+        for (const [id, record] of features) pendingTempoRef.current.set(id, record);
+        setTempoProgress((current) => ({
+          ...(current ?? {}), running: true, batchesDone, batchesTotal, failedBatches,
+          added: (current?.added ?? 0) + features.size
+        }));
+      }
+    })
+      .then((result) => {
+        if (isCancelled()) return;
+        setTempoProgress({ running: false, ...result });
+      })
+      .catch((error) => {
+        console.warn('Background tempo load failed', error);
+        if (!isCancelled()) setTempoProgress(null);
+      })
+      .finally(() => {
+        clearInterval(flushTimer);
+        if (!isCancelled()) flushPendingTempo();
+      });
+  }, [flushPendingTempo]);
+
   const getData = useCallback(async () => {
     setIsLoading(true);
 
@@ -135,6 +191,7 @@ function App() {
       setClassPlaylists(_classPlaylists);
       setTrackLibrary(buildTrackLibrary(_libraryPlaylists, _classPlaylists, Date.now(), featuresById));
       setIsLoading(false);
+      startBackgroundTempoLoad([..._libraryPlaylists, ..._classPlaylists]);
     } catch (error) {
       console.error('Sync failed', error);
       // Deliberately does NOT clear isLoading — the backdrop has to stay mounted
@@ -152,13 +209,21 @@ function App() {
     } finally {
       clearInterval(ticker);
     }
-  }, []);
+  }, [startBackgroundTempoLoad]);
 
   useEffect(() => {
     if (isSpotifyAuthorized) {
       getData();
     }
   }, [isSpotifyAuthorized, getData]);
+
+  useEffect(() => {
+    // Bumping the run id makes any in-flight loader see itself as superseded.
+    // (Written as `= ... + 1` rather than `++` so eslint-plugin-react-hooks'
+    // exhaustive-deps can see a plain `.current` assignment elsewhere on this
+    // ref and knows it isn't a React-managed DOM ref being read stale in cleanup.)
+    return () => { tempoRunRef.current = tempoRunRef.current + 1; };
+  }, []);
 
   const refreshData = async () => {
     setTrackLibrary([]);
@@ -498,6 +563,7 @@ function App() {
             >
               🎧 Playlist Planner
             </Typography>
+            <TempoProgressChip progress={tempoProgress} />
             <Tooltip title="Refresh Authorization">
               <IconButton
                 size="large"
