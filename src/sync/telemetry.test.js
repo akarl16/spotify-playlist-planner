@@ -181,24 +181,3 @@ test('unknown events pass through without changing state', () => {
 
     expect(after).toBe(before);
 });
-
-test('the features phase exists and starts pending', () => {
-    const phase = initialTelemetry().phases.find(p => p.key === 'features');
-
-    expect(phase).toBeDefined();
-    expect(phase.label).toBe('Track tempo');
-    expect(phase.status).toBe('pending');
-});
-
-test('the features phase progresses like any other', () => {
-    const state = apply([
-        { type: 'sync:start', at: 0 },
-        { type: 'phase:start', phase: 'features', total: 100 },
-        { type: 'item:success', phase: 'features', playlistId: 'batch-0', name: 'batch 1', trackCount: 40, durationMs: 10 }
-    ]);
-    const phase = state.phases.find(p => p.key === 'features');
-
-    expect(phase.status).toBe('active');
-    expect(phase.done).toBe(1);
-    expect(phase.total).toBe(100);
-});

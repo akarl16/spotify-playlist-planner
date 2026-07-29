@@ -2,17 +2,6 @@ import * as database from '../database.js';
 import { runSync } from './syncEngine.js';
 import { SYNC_STATUS } from './syncState.js';
 
-// runSync defaults reccoClient to the real ReccoBeats module, and most tests here
-// do not inject one. Without this mock those tests reach a live URL, and only stay
-// offline by accident because jsdom leaves global.fetch undefined — one polyfill
-// away from the suite hammering a third-party API. Tests that pass an explicit
-// reccoClient still override this.
-jest.mock('../reccobeats.js', () => ({
-    RECCOBEATS_BATCH_SIZE: 40,
-    resolveTrackIds: jest.fn().mockResolvedValue(new Map()),
-    fetchAudioFeatures: jest.fn().mockResolvedValue(new Map())
-}));
-
 function makeItem(id) {
     return {
         added_at: '2026-01-15T00:00:00Z',
@@ -681,173 +670,14 @@ test('a playlist complete at the CURRENT snapshot is still skipped as cached', a
     expect((await database.getPlaylist('cls')).trackList[0].id).toBe('keep');
 });
 
-test('the features phase fetches tempo for tracks that lack it', async () => {
+test('runSync returns cached features without any tempo network call', async () => {
+    await database.putTrackAudioFeaturesBatch([{ id: 't1', tempo: 128, source: 'reccobeats' }]);
     const client = makeClient({
         playlists: [header('lib', '[LIBRARY] Main', 1)],
         itemsByPlaylist: { lib: [makeItem('t1')] }
     });
-    const recco = {
-        resolveTrackIds: jest.fn().mockResolvedValue(new Map([['t1', 'rb-1']])),
-        fetchAudioFeatures: jest.fn().mockResolvedValue(new Map([['t1', { tempo: 128 }]]))
-    };
 
-    const result = await runSync({ emit: () => {}, spotifyClient: client, reccoClient: recco });
+    const result = await runSync({ emit: () => {}, spotifyClient: client });
 
     expect(result.featuresById.get('t1')).toMatchObject({ tempo: 128 });
-    expect(await database.getTrackAudioFeatures('t1')).toMatchObject({ tempo: 128, source: 'reccobeats' });
-});
-
-test('a track the catalogue lacks is recorded so it is never re-requested', async () => {
-    const client = makeClient({
-        playlists: [header('lib', '[LIBRARY] Main', 1)],
-        itemsByPlaylist: { lib: [makeItem('t1')] }
-    });
-    const recco = {
-        resolveTrackIds: jest.fn().mockResolvedValue(new Map()),
-        fetchAudioFeatures: jest.fn().mockResolvedValue(new Map())
-    };
-
-    await runSync({ emit: () => {}, spotifyClient: client, reccoClient: recco });
-
-    expect(await database.getTrackAudioFeatures('t1')).toMatchObject({ source: 'reccobeats-notfound' });
-});
-
-test('a sync with no injected ReccoBeats client makes no network call', async () => {
-    // Guards the default path: these tests must never reach a live third-party API,
-    // and must not depend on global.fetch happening to be undefined.
-    const reccobeats = require('../reccobeats.js');
-    const client = makeClient({
-        playlists: [header('lib', '[LIBRARY] Main', 1)],
-        itemsByPlaylist: { lib: [makeItem('t1')] }
-    });
-
-    await runSync({ emit: () => {}, spotifyClient: client });
-
-    // The mocked module was used, and nothing tried to fetch for real.
-    expect(reccobeats.resolveTrackIds).toHaveBeenCalled();
-    expect(typeof reccobeats.resolveTrackIds.mock).toBe('object');
-});
-
-test('tracks with stored features are not requested again', async () => {
-    await database.putTrackAudioFeaturesBatch([{ id: 't1', tempo: 128, source: 'reccobeats' }]);
-
-    const client = makeClient({
-        playlists: [header('lib', '[LIBRARY] Main', 1)],
-        itemsByPlaylist: { lib: [makeItem('t1')] }
-    });
-    const recco = {
-        resolveTrackIds: jest.fn().mockResolvedValue(new Map()),
-        fetchAudioFeatures: jest.fn().mockResolvedValue(new Map())
-    };
-
-    await runSync({ emit: () => {}, spotifyClient: client, reccoClient: recco });
-
-    expect(recco.resolveTrackIds).not.toHaveBeenCalled();
-});
-
-test('a recorded miss is not requested again on a later sync', async () => {
-    await database.putTrackAudioFeaturesBatch([{ id: 't1', source: 'reccobeats-notfound' }]);
-
-    const client = makeClient({
-        playlists: [header('lib', '[LIBRARY] Main', 1)],
-        itemsByPlaylist: { lib: [makeItem('t1')] }
-    });
-    const recco = {
-        resolveTrackIds: jest.fn().mockResolvedValue(new Map()),
-        fetchAudioFeatures: jest.fn().mockResolvedValue(new Map())
-    };
-
-    await runSync({ emit: () => {}, spotifyClient: client, reccoClient: recco });
-
-    expect(recco.resolveTrackIds).not.toHaveBeenCalled();
-});
-
-test('never asks for more than one batch per request', async () => {
-    const items = Array.from({ length: 95 }, (_, i) => makeItem(`t${i}`));
-    const client = makeClient({
-        playlists: [header('lib', '[LIBRARY] Main', 95)],
-        itemsByPlaylist: { lib: items }
-    });
-    const seenBatchSizes = [];
-    const recco = {
-        resolveTrackIds: jest.fn(async (ids) => { seenBatchSizes.push(ids.length); return new Map(); }),
-        fetchAudioFeatures: jest.fn().mockResolvedValue(new Map())
-    };
-
-    await runSync({ emit: () => {}, spotifyClient: client, reccoClient: recco });
-
-    expect(Math.max(...seenBatchSizes)).toBeLessThanOrEqual(40);
-    expect(seenBatchSizes.reduce((a, b) => a + b, 0)).toBe(95);
-});
-
-test('a features failure does not fail the whole sync', async () => {
-    // Tempo is an enhancement; playlists are the product.
-    const client = makeClient({
-        playlists: [header('lib', '[LIBRARY] Main', 1)],
-        itemsByPlaylist: { lib: [makeItem('t1')] }
-    });
-    const recco = {
-        resolveTrackIds: jest.fn().mockRejectedValue(
-            Object.assign(new Error('boom'), { kind: 'rate_limit', status: 429 })
-        ),
-        fetchAudioFeatures: jest.fn()
-    };
-
-    const result = await runSync({ emit: () => {}, spotifyClient: client, reccoClient: recco });
-
-    expect(result.libraryPlaylists).toHaveLength(1);
-    expect((await database.getPlaylist('lib')).trackList).toHaveLength(1);
-});
-
-test('the features phase emits start and complete', async () => {
-    const client = makeClient({
-        playlists: [header('lib', '[LIBRARY] Main', 1)],
-        itemsByPlaylist: { lib: [makeItem('t1')] }
-    });
-    const recco = {
-        resolveTrackIds: jest.fn().mockResolvedValue(new Map([['t1', 'rb-1']])),
-        fetchAudioFeatures: jest.fn().mockResolvedValue(new Map([['t1', { tempo: 128 }]]))
-    };
-    const events = [];
-
-    await runSync({ emit: (e) => events.push(e), spotifyClient: client, reccoClient: recco });
-
-    expect(events.some(e => e.type === 'phase:start' && e.phase === 'features')).toBe(true);
-    expect(events.some(e => e.type === 'phase:complete' && e.phase === 'features')).toBe(true);
-});
-
-test('the features phase spaces out batches but does not pad the final one', async () => {
-    // 95 tracks -> 3 batches of at most 40 -> exactly 2 inter-batch delays.
-    const items = Array.from({ length: 95 }, (_, i) => makeItem(`t${i}`));
-    const client = makeClient({
-        playlists: [header('lib', '[LIBRARY] Main', 95)],
-        itemsByPlaylist: { lib: items }
-    });
-    const recco = {
-        resolveTrackIds: jest.fn().mockResolvedValue(new Map()),
-        fetchAudioFeatures: jest.fn().mockResolvedValue(new Map())
-    };
-    const sleep = jest.fn().mockResolvedValue(undefined);
-
-    await runSync({ emit: () => {}, spotifyClient: client, reccoClient: recco, sleep });
-
-    expect(recco.resolveTrackIds).toHaveBeenCalledTimes(3);
-    expect(sleep).toHaveBeenCalledTimes(2);
-    expect(sleep).toHaveBeenCalledWith(120);
-});
-
-test('a single batch incurs no delay at all', async () => {
-    const client = makeClient({
-        playlists: [header('lib', '[LIBRARY] Main', 1)],
-        itemsByPlaylist: { lib: [makeItem('t1')] }
-    });
-    const recco = {
-        resolveTrackIds: jest.fn().mockResolvedValue(new Map()),
-        fetchAudioFeatures: jest.fn().mockResolvedValue(new Map())
-    };
-    const sleep = jest.fn().mockResolvedValue(undefined);
-
-    await runSync({ emit: () => {}, spotifyClient: client, reccoClient: recco, sleep });
-
-    expect(sleep).not.toHaveBeenCalled();
 });

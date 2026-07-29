@@ -1,6 +1,5 @@
 import * as spotify from '../spotify.js';
 import * as database from '../database.js';
-import * as reccobeats from '../reccobeats.js';
 import { CLASS_DATE_REGEX } from '../trackLibrary.js';
 import { recordAttempt, recordSuccess, recordFailure, getPlaylistIdsNeedingRepair, needsSync } from './syncState.js';
 import { mapWithConcurrency } from './pool.js';
@@ -31,16 +30,6 @@ function headersAreFresh(storedCount) {
 // without re-running a cold sync and confirming the rate-limited count stays zero.
 const SYNC_CONCURRENCY = 2;
 
-// ReccoBeats rate-limits harder than Spotify for this workload. Measured: at
-// SYNC_CONCURRENCY (2) with no delay, 59 of 179 batches returned HTTP 429; the
-// same 179 batches run sequentially with a ~120ms gap took zero. It is the burst
-// pattern that trips it, not the volume — so this phase throttles itself rather
-// than sharing the playlist pool's settings.
-const FEATURES_CONCURRENCY = 1;
-const FEATURES_BATCH_DELAY_MS = 120;
-
-const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
 /**
  * Runs a full sync and returns the playlists the UI needs.
  *
@@ -49,7 +38,7 @@ const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
  * fetched only when the store is empty, no pruning, and a repair phase that
  * reports its queue without executing. All of this changes in stage 2.
  */
-async function runSync({ emit, spotifyClient = spotify, reccoClient = reccobeats, sleep = defaultSleep }) {
+async function runSync({ emit, spotifyClient = spotify }) {
     emit({ type: 'sync:start', at: Date.now() });
 
     const headers = await syncPlaylistHeaders({ emit, spotifyClient });
@@ -79,15 +68,15 @@ async function runSync({ emit, spotifyClient = spotify, reccoClient = reccobeats
     mergedLibrary.sort((a, b) => a.name.localeCompare(b.name));
     mergedClass.sort((a, b) => b.name.localeCompare(a.name));
 
-    // Non-fatal by construction: a features failure must never cost the user their
-    // playlists, which are already safely stored by this point.
-    let featuresById = new Map();
-    try {
-        featuresById = await runFeaturesPhase([...mergedLibrary, ...mergedClass], { emit, reccoClient, sleep });
-    } catch (error) {
-        console.warn('Track tempo phase failed; continuing without it', error);
-        emit({ type: 'phase:complete', phase: 'features', at: Date.now() });
+    // Cached tempos only — no network here. Fetching moved to a background loader
+    // so a ~2 minute tempo load no longer sits inside a blocking backdrop.
+    const trackIds = new Set();
+    for (const playlist of [...mergedLibrary, ...mergedClass]) {
+        for (const track of playlist.trackList ?? []) {
+            if (track?.id) trackIds.add(track.id);
+        }
     }
+    const featuresById = await database.getAudioFeaturesMap(Array.from(trackIds));
 
     emit({ type: 'sync:complete', at: Date.now() });
 
@@ -346,79 +335,6 @@ async function runRepairPhase(inScopeHeaders, { emit, spotifyClient }) {
     emit({ type: 'phase:complete', phase: 'repair', at: Date.now() });
 
     return new Map(repaired.map((playlist) => [playlist.id, playlist]));
-}
-
-// Fifth phase: tempo and other audio features from ReccoBeats, keyed by Spotify
-// track id. Measured coverage of this library is ~68%; misses are recorded so they
-// are never re-requested, and the gap is surfaced in the UI rather than hidden.
-//
-// Deliberately non-fatal: playlists are the product, tempo is an enhancement. A
-// ReccoBeats outage must not cost the user their library.
-async function runFeaturesPhase(playlists, { emit, reccoClient, sleep = defaultSleep }) {
-    const trackIds = new Set();
-    for (const playlist of playlists) {
-        for (const track of playlist.trackList ?? []) {
-            if (track?.id) trackIds.add(track.id);
-        }
-    }
-
-    const allIds = Array.from(trackIds);
-    const missing = await database.getTrackIdsMissingAudioFeatures(allIds);
-
-    const batches = [];
-    for (let i = 0; i < missing.length; i += reccobeats.RECCOBEATS_BATCH_SIZE) {
-        batches.push(missing.slice(i, i + reccobeats.RECCOBEATS_BATCH_SIZE));
-    }
-
-    emit({ type: 'phase:start', phase: 'features', total: batches.length, at: Date.now() });
-
-    await mapWithConcurrency(batches, FEATURES_CONCURRENCY, async (batch, index) => {
-        const startedAt = Date.now();
-        const onApiCall = (info) => emit({ type: 'api:call', phase: 'features', rateLimited: info.rateLimited });
-
-        try {
-            const idMap = await reccoClient.resolveTrackIds(batch, { onApiCall });
-
-            const featuresBySpotifyId = idMap.size > 0
-                ? await reccoClient.fetchAudioFeatures(Array.from(idMap.values()), { onApiCall })
-                : new Map();
-
-            const records = batch.map((trackId) => {
-                const features = featuresBySpotifyId.get(trackId);
-                // A miss is stored, not skipped. Skipping would re-request every
-                // known-absent track on every future sync.
-                return features
-                    ? { id: trackId, ...features, source: 'reccobeats' }
-                    : { id: trackId, source: 'reccobeats-notfound' };
-            });
-
-            await database.putTrackAudioFeaturesBatch(records);
-
-            emit({
-                type: 'item:success', phase: 'features',
-                playlistId: `features-${index}`, name: `${batch.length} tracks`,
-                trackCount: featuresBySpotifyId.size, durationMs: Date.now() - startedAt
-            });
-        } catch (error) {
-            emit({
-                type: 'item:error', phase: 'features',
-                playlistId: `features-${index}`, name: `${batch.length} tracks`,
-                cause: { kind: error.kind ?? 'http', status: error.status ?? 0 },
-                storedTrackCount: 0, tracksTotal: batch.length
-            });
-        }
-
-        // Space out requests. Skipped after the final batch so the phase does not
-        // pad the end of every sync — and so single-batch runs (all of the tests)
-        // incur no delay at all.
-        if (index < batches.length - 1) {
-            await sleep(FEATURES_BATCH_DELAY_MS);
-        }
-    });
-
-    emit({ type: 'phase:complete', phase: 'features', at: Date.now() });
-
-    return await database.getAudioFeaturesMap(allIds);
 }
 
 export { runSync };

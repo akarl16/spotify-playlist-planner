@@ -2,8 +2,7 @@ const PHASES = [
     { key: 'headers', label: 'Playlist headers' },
     { key: 'library', label: 'Library playlists' },
     { key: 'class', label: 'Class playlists' },
-    { key: 'repair', label: 'Repair incomplete playlists' },
-    { key: 'features', label: 'Track tempo' }
+    { key: 'repair', label: 'Repair incomplete playlists' }
 ];
 
 const FEED_LIMIT = 50;
