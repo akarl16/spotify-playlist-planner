@@ -158,7 +158,7 @@ async function getStorageStats() {
             withTempo: 0,
             withEnergy: 0,
             withDanceability: 0,
-            getsongbpmSource: 0,
+            reccobeatsSource: 0,
             tempoDistribution: {
                 slow: 0,      // < 100 BPM
                 medium: 0,    // 100-130 BPM
@@ -237,8 +237,8 @@ async function getStorageStats() {
             if (feature.danceability !== null && feature.danceability !== undefined) {
                 stats.audioFeatures.withDanceability++;
             }
-            if (feature.source === 'getsongbpm') {
-                stats.audioFeatures.getsongbpmSource++;
+            if (feature.source === 'reccobeats') {
+                stats.audioFeatures.reccobeatsSource++;
             }
         }
         

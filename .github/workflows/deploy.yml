@@ -23,8 +23,6 @@ jobs:
 
       - name: Build
         run: CI=false bun run build
-        env:
-          REACT_APP_GETSONGBPM_API_KEY: ${{ secrets.GETSONGBPM_API_KEY }}
 
       - name: Deploy to gh-pages branch
         uses: peaceiris/actions-gh-pages@v4

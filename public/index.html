@@ -40,9 +40,16 @@
     </noscript>
     <div id="root"></div>
     
-    <!-- Backlinks for API access (visible to crawlers, hidden when React loads) -->
+    <!--
+      Data-source attribution (visible to crawlers, hidden when React loads).
+
+      This used to credit GetSongBPM, whose free tier required a backlink. That
+      provider is no longer used — tempo now comes from ReccoBeats, which requires
+      no attribution but gets credited anyway because it is where the data is
+      actually from.
+    -->
     <footer id="static-footer" style="position: fixed; bottom: 0; width: 100%; text-align: center; padding: 10px; background: #121212;">
-      <a href="https://getsongbpm.com" target="_blank" style="color: #4DD0E1; margin-right: 20px;">Song data from GetSongBPM</a>
+      <a href="https://reccobeats.com" target="_blank" style="color: #4DD0E1; margin-right: 20px;">Tempo data from ReccoBeats</a>
       <a href="https://www.spotify.com" target="_blank" style="color: #1DB954;">Powered by Spotify</a>
     </footer>
     <!--
