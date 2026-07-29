@@ -296,30 +296,6 @@ function App() {
           </Box>
         )
       },
-      // Audio features disabled
-      // {
-      //   accessorFn: (row) => row.audio_features?.tempo,
-      //   header: "Tempo",
-      //   size: 20,
-      //   Cell: ({ cell }) => (
-      //     <Box sx={{ fontWeight: 600, color: '#1DB954' }}>
-      //       {cell.getValue() ? Math.round(cell.getValue()) : '-'}
-      //     </Box>
-      //   )
-      // },
-      // {
-      //   accessorFn: (row) => row.audio_features?.energy,
-      //   header: "Energy",
-      //   size: 20,
-      //   Cell: ({ cell }) => (
-      //     <Box sx={{ 
-      //       fontWeight: 600,
-      //       color: cell.getValue() > 0.7 ? '#ff4444' : cell.getValue() > 0.4 ? '#ffaa00' : '#1DB954'
-      //     }}>
-      //       {cell.getValue() ? (cell.getValue() * 100).toFixed(0) + '%' : '-'}
-      //     </Box>
-      //   )
-      // },
       {
 
         accessorFn: (row) => row.plays,
