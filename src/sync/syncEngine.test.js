@@ -815,3 +815,39 @@ test('the features phase emits start and complete', async () => {
     expect(events.some(e => e.type === 'phase:start' && e.phase === 'features')).toBe(true);
     expect(events.some(e => e.type === 'phase:complete' && e.phase === 'features')).toBe(true);
 });
+
+test('the features phase spaces out batches but does not pad the final one', async () => {
+    // 95 tracks -> 3 batches of at most 40 -> exactly 2 inter-batch delays.
+    const items = Array.from({ length: 95 }, (_, i) => makeItem(`t${i}`));
+    const client = makeClient({
+        playlists: [header('lib', '[LIBRARY] Main', 95)],
+        itemsByPlaylist: { lib: items }
+    });
+    const recco = {
+        resolveTrackIds: jest.fn().mockResolvedValue(new Map()),
+        fetchAudioFeatures: jest.fn().mockResolvedValue(new Map())
+    };
+    const sleep = jest.fn().mockResolvedValue(undefined);
+
+    await runSync({ emit: () => {}, spotifyClient: client, reccoClient: recco, sleep });
+
+    expect(recco.resolveTrackIds).toHaveBeenCalledTimes(3);
+    expect(sleep).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledWith(120);
+});
+
+test('a single batch incurs no delay at all', async () => {
+    const client = makeClient({
+        playlists: [header('lib', '[LIBRARY] Main', 1)],
+        itemsByPlaylist: { lib: [makeItem('t1')] }
+    });
+    const recco = {
+        resolveTrackIds: jest.fn().mockResolvedValue(new Map()),
+        fetchAudioFeatures: jest.fn().mockResolvedValue(new Map())
+    };
+    const sleep = jest.fn().mockResolvedValue(undefined);
+
+    await runSync({ emit: () => {}, spotifyClient: client, reccoClient: recco, sleep });
+
+    expect(sleep).not.toHaveBeenCalled();
+});
