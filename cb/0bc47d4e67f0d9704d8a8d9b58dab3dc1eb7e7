@@ -1,0 +1,28 @@
+src/App.test.jsx
+  s_4775184bff5254::t_b2a10bd42659d9 6,10-14
+  s_4775184bff5254::t_88952a97cc9664 39-73
+src/App.jsx
+  s_4775184bff5254::t_082787b4225046 131-178
+  s_4775184bff5254::t_179339e880076b 87-92
+  s_4775184bff5254::t_89ac5758d7ea5a 42-43
+  s_4775184bff5254::t_e29894763c6051 194
+  s_4775184bff5254::t_2269abe99e7d20 212,220-221,226
+  s_4775184bff5254::t_023494e82ebc3f 222-225
+  s_4775184bff5254::t_a4fe7e33dca59b 566
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "cb0bc47d4e67f0d9704d8a8d9b58dab3dc1eb7e7",
+  "prompts": {},
+  "sessions": {
+    "s_4775184bff5254": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d5c0ba4f-f0f7-467c-97a4-4be516889692",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Adam Karl <akarl16@gmail.com>"
+    }
+  }
+}
