@@ -2,6 +2,17 @@ import * as database from '../database.js';
 import { runSync } from './syncEngine.js';
 import { SYNC_STATUS } from './syncState.js';
 
+// runSync defaults reccoClient to the real ReccoBeats module, and most tests here
+// do not inject one. Without this mock those tests reach a live URL, and only stay
+// offline by accident because jsdom leaves global.fetch undefined — one polyfill
+// away from the suite hammering a third-party API. Tests that pass an explicit
+// reccoClient still override this.
+jest.mock('../reccobeats.js', () => ({
+    RECCOBEATS_BATCH_SIZE: 40,
+    resolveTrackIds: jest.fn().mockResolvedValue(new Map()),
+    fetchAudioFeatures: jest.fn().mockResolvedValue(new Map())
+}));
+
 function makeItem(id) {
     return {
         added_at: '2026-01-15T00:00:00Z',
@@ -699,6 +710,22 @@ test('a track the catalogue lacks is recorded so it is never re-requested', asyn
     await runSync({ emit: () => {}, spotifyClient: client, reccoClient: recco });
 
     expect(await database.getTrackAudioFeatures('t1')).toMatchObject({ source: 'reccobeats-notfound' });
+});
+
+test('a sync with no injected ReccoBeats client makes no network call', async () => {
+    // Guards the default path: these tests must never reach a live third-party API,
+    // and must not depend on global.fetch happening to be undefined.
+    const reccobeats = require('../reccobeats.js');
+    const client = makeClient({
+        playlists: [header('lib', '[LIBRARY] Main', 1)],
+        itemsByPlaylist: { lib: [makeItem('t1')] }
+    });
+
+    await runSync({ emit: () => {}, spotifyClient: client });
+
+    // The mocked module was used, and nothing tried to fetch for real.
+    expect(reccobeats.resolveTrackIds).toHaveBeenCalled();
+    expect(typeof reccobeats.resolveTrackIds.mock).toBe('object');
 });
 
 test('tracks with stored features are not requested again', async () => {
