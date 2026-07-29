@@ -1,0 +1,25 @@
+src/sync/syncEngine.js
+  s_4775184bff5254::t_a2f5b233af3ee1 52
+  s_4775184bff5254::t_9e6d5dca37bdc2 86
+  s_4775184bff5254::t_daa245b25f7a8f 34-43
+  s_4775184bff5254::t_3c1d33de017ecc 357
+  s_4775184bff5254::t_ccd75c775a74b8 375,410-415
+src/sync/syncEngine.test.js
+  s_4775184bff5254::t_25284937108ec6 818-853
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "7ca83695031741f41e8da0debef2aee700d58d26",
+  "prompts": {},
+  "sessions": {
+    "s_4775184bff5254": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d5c0ba4f-f0f7-467c-97a4-4be516889692",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Adam Karl <akarl16@gmail.com>"
+    }
+  }
+}
