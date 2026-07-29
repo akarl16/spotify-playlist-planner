@@ -26,8 +26,9 @@ function scoreRecency(playedAtMs, now) {
  * @param {Array}  libraryPlaylists stored playlists carrying trackList
  * @param {Array}  classPlaylists   stored playlists carrying trackList
  * @param {number} now              millisecond timestamp, injected for testability
+ * @param {Map}    featuresById     track id -> { tempo }, from ReccoBeats via runSync
  */
-function buildTrackLibrary(libraryPlaylists, classPlaylists, now) {
+function buildTrackLibrary(libraryPlaylists, classPlaylists, now, featuresById = new Map()) {
     const trackMap = new Map();
 
     for (const playlist of libraryPlaylists) {
@@ -48,7 +49,10 @@ function buildTrackLibrary(libraryPlaylists, classPlaylists, now) {
                 added_at: storedTrack.added_at,
                 lists: playlist.name,
                 plays: [],
-                recencyScore: 0
+                recencyScore: 0,
+                // null, not undefined or 0 — the UI must be able to tell "no data"
+                // apart from a real reading. Roughly a third of this library has none.
+                tempo: featuresById.get(storedTrack.id)?.tempo ?? null,
             });
         }
     }

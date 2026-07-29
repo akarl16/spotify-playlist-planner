@@ -112,6 +112,33 @@ test('does not mutate the stored playlist objects it reads', () => {
     expect(storedInClass.added_at).toEqual(daysAgo(10));
 });
 
+test('attaches tempo when the features map has it', () => {
+    const features = new Map([['t1', { tempo: 128.4 }]]);
+    const result = buildTrackLibrary(
+        [libraryPlaylist([track('t1', 'Alpha', daysAgo(10))])], [], NOW, features
+    );
+
+    expect(result[0].tempo).toBe(128.4);
+});
+
+test('tempo is null when the track has no features', () => {
+    // ~32% of this library. Must be null, never 0 or undefined-by-omission,
+    // so the UI can distinguish "no data" from "a real value".
+    const result = buildTrackLibrary(
+        [libraryPlaylist([track('t1', 'Alpha', daysAgo(10))])], [], NOW, new Map()
+    );
+
+    expect(result[0].tempo).toBeNull();
+});
+
+test('works without a features map at all', () => {
+    const result = buildTrackLibrary(
+        [libraryPlaylist([track('t1', 'Alpha', daysAgo(10))])], [], NOW
+    );
+
+    expect(result[0].tempo).toBeNull();
+});
+
 test('is idempotent — calling twice yields identical results', () => {
     const library = [libraryPlaylist([track('t1', 'Alpha', daysAgo(10))], '[LIBRARY] One')];
     const classes = [classPlaylist('2026-07-25 Ride', [track('t1', 'Alpha', daysAgo(2))])];

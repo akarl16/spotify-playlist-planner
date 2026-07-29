@@ -129,11 +129,11 @@ function App() {
     const ticker = setInterval(() => emit({ type: 'tick', at: Date.now() }), 1000);
 
     try {
-      const { libraryPlaylists: _libraryPlaylists, classPlaylists: _classPlaylists } = await runSync({ emit });
+      const { libraryPlaylists: _libraryPlaylists, classPlaylists: _classPlaylists, featuresById } = await runSync({ emit });
 
       setLibraryPlaylists(_libraryPlaylists);
       setClassPlaylists(_classPlaylists);
-      setTrackLibrary(buildTrackLibrary(_libraryPlaylists, _classPlaylists, Date.now()));
+      setTrackLibrary(buildTrackLibrary(_libraryPlaylists, _classPlaylists, Date.now(), featuresById));
       setIsLoading(false);
     } catch (error) {
       console.error('Sync failed', error);
@@ -295,6 +295,29 @@ function App() {
             {cell.getValue()}
           </Box>
         )
+      },
+      {
+        // Rows carry tempo: null, but TanStack's sortUndefined only recognises
+        // `undefined` — returning null here would sort unknowns as a low value and
+        // bury real slow tracks beneath them.
+        accessorFn: (row) => row.tempo ?? undefined,
+        id: "tempo",
+        header: "BPM",
+        size: 40,
+        enableColumnFilter: false,
+        sortUndefined: 'last',
+        Cell: ({ cell }) => {
+          const tempo = cell.getValue();
+          return (
+            <Box sx={{
+              fontFamily: 'monospace',
+              fontWeight: tempo ? 600 : 400,
+              color: tempo ? '#1DB954' : 'rgba(255,255,255,0.3)'
+            }}>
+              {tempo ? Math.round(tempo) : '—'}
+            </Box>
+          );
+        }
       },
       {
 
