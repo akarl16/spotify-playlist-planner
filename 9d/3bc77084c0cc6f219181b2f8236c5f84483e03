@@ -1,0 +1,9 @@
+docs/superpowers/specs/2026-07-27-spotify-sync-observability-design.md
+  ai_agent 662-712
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "9d3bc77084c0cc6f219181b2f8236c5f84483e03",
+  "prompts": {}
+}
