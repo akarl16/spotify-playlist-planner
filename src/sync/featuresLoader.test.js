@@ -109,6 +109,22 @@ test('spaces batches out but does not pad the final one', async () => {
     expect(sleep).toHaveBeenCalledWith(120);
 });
 
+test('a single batch incurs no delay at all', async () => {
+    // Boundary case for `index < batches.length - 1`: with one batch that is
+    // `0 < 0`. Covered in spirit by the 3-batch test above, but n=1 is exactly
+    // where an off-by-one would hide.
+    const recco = {
+        resolveTrackIds: jest.fn().mockResolvedValue(new Map()),
+        fetchAudioFeatures: jest.fn().mockResolvedValue(new Map())
+    };
+    const sleep = jest.fn().mockResolvedValue(undefined);
+
+    await loadTrackFeatures({ trackIds: ['t1'], reccoClient: recco, sleep });
+
+    expect(recco.resolveTrackIds).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+});
+
 test('an empty track list does no work', async () => {
     const recco = { resolveTrackIds: jest.fn(), fetchAudioFeatures: jest.fn() };
 
