@@ -1,0 +1,25 @@
+src/trackLibrary.js
+  s_4775184bff5254::t_c47916f9b19f6c 52-55
+  s_4775184bff5254::t_fb7e7ecff394a2 29,31
+src/trackLibrary.test.js
+  s_4775184bff5254::t_536df126b23934 115-141
+src/App.jsx
+  s_4775184bff5254::t_b6afe661ee95c2 132,136
+  s_4775184bff5254::t_7fb4f88ffdfa32 300-321
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "7f4c521fafd6163a9cadd0541c935a4d5110cf20",
+  "prompts": {},
+  "sessions": {
+    "s_4775184bff5254": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d5c0ba4f-f0f7-467c-97a4-4be516889692",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Adam Karl <akarl16@gmail.com>"
+    }
+  }
+}
