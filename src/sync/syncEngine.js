@@ -1,5 +1,6 @@
 import * as spotify from '../spotify.js';
 import * as database from '../database.js';
+import * as reccobeats from '../reccobeats.js';
 import { CLASS_DATE_REGEX } from '../trackLibrary.js';
 import { recordAttempt, recordSuccess, recordFailure, getPlaylistIdsNeedingRepair, needsSync } from './syncState.js';
 import { mapWithConcurrency } from './pool.js';
@@ -38,7 +39,7 @@ const SYNC_CONCURRENCY = 2;
  * fetched only when the store is empty, no pruning, and a repair phase that
  * reports its queue without executing. All of this changes in stage 2.
  */
-async function runSync({ emit, spotifyClient = spotify }) {
+async function runSync({ emit, spotifyClient = spotify, reccoClient = reccobeats }) {
     emit({ type: 'sync:start', at: Date.now() });
 
     const headers = await syncPlaylistHeaders({ emit, spotifyClient });
@@ -68,9 +69,19 @@ async function runSync({ emit, spotifyClient = spotify }) {
     mergedLibrary.sort((a, b) => a.name.localeCompare(b.name));
     mergedClass.sort((a, b) => b.name.localeCompare(a.name));
 
+    // Non-fatal by construction: a features failure must never cost the user their
+    // playlists, which are already safely stored by this point.
+    let featuresById = new Map();
+    try {
+        featuresById = await runFeaturesPhase([...mergedLibrary, ...mergedClass], { emit, reccoClient });
+    } catch (error) {
+        console.warn('Track tempo phase failed; continuing without it', error);
+        emit({ type: 'phase:complete', phase: 'features', at: Date.now() });
+    }
+
     emit({ type: 'sync:complete', at: Date.now() });
 
-    return { libraryPlaylists: mergedLibrary, classPlaylists: mergedClass };
+    return { libraryPlaylists: mergedLibrary, classPlaylists: mergedClass, featuresById };
 }
 
 async function syncPlaylistHeaders({ emit, spotifyClient }) {
@@ -325,6 +336,72 @@ async function runRepairPhase(inScopeHeaders, { emit, spotifyClient }) {
     emit({ type: 'phase:complete', phase: 'repair', at: Date.now() });
 
     return new Map(repaired.map((playlist) => [playlist.id, playlist]));
+}
+
+// Fifth phase: tempo and other audio features from ReccoBeats, keyed by Spotify
+// track id. Measured coverage of this library is ~68%; misses are recorded so they
+// are never re-requested, and the gap is surfaced in the UI rather than hidden.
+//
+// Deliberately non-fatal: playlists are the product, tempo is an enhancement. A
+// ReccoBeats outage must not cost the user their library.
+async function runFeaturesPhase(playlists, { emit, reccoClient }) {
+    const trackIds = new Set();
+    for (const playlist of playlists) {
+        for (const track of playlist.trackList ?? []) {
+            if (track?.id) trackIds.add(track.id);
+        }
+    }
+
+    const allIds = Array.from(trackIds);
+    const missing = await database.getTrackIdsMissingAudioFeatures(allIds);
+
+    const batches = [];
+    for (let i = 0; i < missing.length; i += reccobeats.RECCOBEATS_BATCH_SIZE) {
+        batches.push(missing.slice(i, i + reccobeats.RECCOBEATS_BATCH_SIZE));
+    }
+
+    emit({ type: 'phase:start', phase: 'features', total: batches.length, at: Date.now() });
+
+    await mapWithConcurrency(batches, SYNC_CONCURRENCY, async (batch, index) => {
+        const startedAt = Date.now();
+        const onApiCall = (info) => emit({ type: 'api:call', phase: 'features', rateLimited: info.rateLimited });
+
+        try {
+            const idMap = await reccoClient.resolveTrackIds(batch, { onApiCall });
+
+            const featuresBySpotifyId = idMap.size > 0
+                ? await reccoClient.fetchAudioFeatures(Array.from(idMap.values()), { onApiCall })
+                : new Map();
+
+            const records = batch.map((trackId) => {
+                const features = featuresBySpotifyId.get(trackId);
+                // A miss is stored, not skipped. Skipping would re-request every
+                // known-absent track on every future sync.
+                return features
+                    ? { id: trackId, ...features, source: 'reccobeats' }
+                    : { id: trackId, source: 'reccobeats-notfound' };
+            });
+
+            await database.putTrackAudioFeaturesBatch(records);
+
+            emit({
+                type: 'item:success', phase: 'features',
+                playlistId: `features-${index}`, name: `${batch.length} tracks`,
+                trackCount: featuresBySpotifyId.size, durationMs: Date.now() - startedAt
+            });
+        } catch (error) {
+            emit({
+                type: 'item:error', phase: 'features',
+                playlistId: `features-${index}`, name: `${batch.length} tracks`,
+                cause: { kind: error.kind ?? 'http', status: error.status ?? 0 },
+                storedTrackCount: 0, tracksTotal: batch.length
+            });
+        }
+    });
+
+    emit({ type: 'phase:complete', phase: 'features', at: Date.now() });
+
+    return await database.getAudioFeaturesMap(allIds);
 }
 
 export { runSync };

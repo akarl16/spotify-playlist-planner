@@ -669,3 +669,122 @@ test('a playlist complete at the CURRENT snapshot is still skipped as cached', a
     expect(spy).not.toHaveBeenCalled();
     expect((await database.getPlaylist('cls')).trackList[0].id).toBe('keep');
 });
+
+test('the features phase fetches tempo for tracks that lack it', async () => {
+    const client = makeClient({
+        playlists: [header('lib', '[LIBRARY] Main', 1)],
+        itemsByPlaylist: { lib: [makeItem('t1')] }
+    });
+    const recco = {
+        resolveTrackIds: jest.fn().mockResolvedValue(new Map([['t1', 'rb-1']])),
+        fetchAudioFeatures: jest.fn().mockResolvedValue(new Map([['t1', { tempo: 128 }]]))
+    };
+
+    const result = await runSync({ emit: () => {}, spotifyClient: client, reccoClient: recco });
+
+    expect(result.featuresById.get('t1')).toMatchObject({ tempo: 128 });
+    expect(await database.getTrackAudioFeatures('t1')).toMatchObject({ tempo: 128, source: 'reccobeats' });
+});
+
+test('a track the catalogue lacks is recorded so it is never re-requested', async () => {
+    const client = makeClient({
+        playlists: [header('lib', '[LIBRARY] Main', 1)],
+        itemsByPlaylist: { lib: [makeItem('t1')] }
+    });
+    const recco = {
+        resolveTrackIds: jest.fn().mockResolvedValue(new Map()),
+        fetchAudioFeatures: jest.fn().mockResolvedValue(new Map())
+    };
+
+    await runSync({ emit: () => {}, spotifyClient: client, reccoClient: recco });
+
+    expect(await database.getTrackAudioFeatures('t1')).toMatchObject({ source: 'reccobeats-notfound' });
+});
+
+test('tracks with stored features are not requested again', async () => {
+    await database.putTrackAudioFeaturesBatch([{ id: 't1', tempo: 128, source: 'reccobeats' }]);
+
+    const client = makeClient({
+        playlists: [header('lib', '[LIBRARY] Main', 1)],
+        itemsByPlaylist: { lib: [makeItem('t1')] }
+    });
+    const recco = {
+        resolveTrackIds: jest.fn().mockResolvedValue(new Map()),
+        fetchAudioFeatures: jest.fn().mockResolvedValue(new Map())
+    };
+
+    await runSync({ emit: () => {}, spotifyClient: client, reccoClient: recco });
+
+    expect(recco.resolveTrackIds).not.toHaveBeenCalled();
+});
+
+test('a recorded miss is not requested again on a later sync', async () => {
+    await database.putTrackAudioFeaturesBatch([{ id: 't1', source: 'reccobeats-notfound' }]);
+
+    const client = makeClient({
+        playlists: [header('lib', '[LIBRARY] Main', 1)],
+        itemsByPlaylist: { lib: [makeItem('t1')] }
+    });
+    const recco = {
+        resolveTrackIds: jest.fn().mockResolvedValue(new Map()),
+        fetchAudioFeatures: jest.fn().mockResolvedValue(new Map())
+    };
+
+    await runSync({ emit: () => {}, spotifyClient: client, reccoClient: recco });
+
+    expect(recco.resolveTrackIds).not.toHaveBeenCalled();
+});
+
+test('never asks for more than one batch per request', async () => {
+    const items = Array.from({ length: 95 }, (_, i) => makeItem(`t${i}`));
+    const client = makeClient({
+        playlists: [header('lib', '[LIBRARY] Main', 95)],
+        itemsByPlaylist: { lib: items }
+    });
+    const seenBatchSizes = [];
+    const recco = {
+        resolveTrackIds: jest.fn(async (ids) => { seenBatchSizes.push(ids.length); return new Map(); }),
+        fetchAudioFeatures: jest.fn().mockResolvedValue(new Map())
+    };
+
+    await runSync({ emit: () => {}, spotifyClient: client, reccoClient: recco });
+
+    expect(Math.max(...seenBatchSizes)).toBeLessThanOrEqual(40);
+    expect(seenBatchSizes.reduce((a, b) => a + b, 0)).toBe(95);
+});
+
+test('a features failure does not fail the whole sync', async () => {
+    // Tempo is an enhancement; playlists are the product.
+    const client = makeClient({
+        playlists: [header('lib', '[LIBRARY] Main', 1)],
+        itemsByPlaylist: { lib: [makeItem('t1')] }
+    });
+    const recco = {
+        resolveTrackIds: jest.fn().mockRejectedValue(
+            Object.assign(new Error('boom'), { kind: 'rate_limit', status: 429 })
+        ),
+        fetchAudioFeatures: jest.fn()
+    };
+
+    const result = await runSync({ emit: () => {}, spotifyClient: client, reccoClient: recco });
+
+    expect(result.libraryPlaylists).toHaveLength(1);
+    expect((await database.getPlaylist('lib')).trackList).toHaveLength(1);
+});
+
+test('the features phase emits start and complete', async () => {
+    const client = makeClient({
+        playlists: [header('lib', '[LIBRARY] Main', 1)],
+        itemsByPlaylist: { lib: [makeItem('t1')] }
+    });
+    const recco = {
+        resolveTrackIds: jest.fn().mockResolvedValue(new Map([['t1', 'rb-1']])),
+        fetchAudioFeatures: jest.fn().mockResolvedValue(new Map([['t1', { tempo: 128 }]]))
+    };
+    const events = [];
+
+    await runSync({ emit: (e) => events.push(e), spotifyClient: client, reccoClient: recco });
+
+    expect(events.some(e => e.type === 'phase:start' && e.phase === 'features')).toBe(true);
+    expect(events.some(e => e.type === 'phase:complete' && e.phase === 'features')).toBe(true);
+});
