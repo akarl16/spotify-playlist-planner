@@ -659,3 +659,54 @@ Fixed by clearing the loading flag on the success path only. This also produced 
 first test for `App.jsx`, verified to fail without the fix. Two rounds of unit tests
 and three code reviews had passed over this path without catching it, because nothing
 rendered the component against a rejecting sync.
+
+## Track tempo results
+
+Verified 2026-07-29. Tempo is fetched from ReccoBeats as a fifth sync phase, keyed by
+Spotify track id.
+
+| Measure | Value |
+| --- | --- |
+| Records written | 7,135 — every unique track |
+| Tracks with tempo | **4,935 (69.2 %)** |
+| Recorded `reccobeats-notfound` | 2,199 |
+| Tempo range / median | 55–228 / **123 BPM** |
+| Requests | ~358 (179 batches × 2 endpoints) |
+| Second run | 0 requests |
+
+Coverage matches the standalone probe taken before any code was written (4,936 /
+2,199), so the implementation loses nothing to the pipeline.
+
+### ReccoBeats rate-limits, and the plan said it would not
+
+The plan asserted no throttling was needed, citing a probe of all 179 batches that
+took zero 429s. **That probe was misleading**: it ran sequentially with a ~120 ms
+gap, while the features phase ran at `SYNC_CONCURRENCY` (2) with no delay. The first
+live run took **59 HTTP 429s** and wrote nothing for those batches.
+
+It is the burst pattern that trips ReccoBeats, not the volume — the same shape as the
+Spotify finding, and caught the same way: by running it rather than reasoning about
+it.
+
+**The recovery design absorbed it.** Because a failed batch is never recorded as
+`reccobeats-notfound`, those 2,335 tracks stayed in the missing set and the next run
+picked up every one, converging to exactly the predicted split. A third run made zero
+requests. Failures were visible in the backdrop throughout rather than silent.
+
+**Then it was fixed properly.** The features phase now throttles itself —
+`FEATURES_CONCURRENCY` of 1 with a 120 ms inter-batch gap, matching the pattern the
+probe had proven clean. It deliberately does not share the playlist pool's settings,
+because the two APIs tolerate different shapes of load. Re-verified: one run,
+7,135 / 7,135 records, **zero 429s, zero console errors**.
+
+### The gap is shown, not hidden
+
+2,199 tracks have no tempo and render as `—` in dimmed grey. Rows carry `tempo: null`
+rather than `0`, so the UI can distinguish "no reading" from a real value, and the
+column accessor coerces to `undefined` so unknowns sort last instead of burying
+genuinely slow tracks.
+
+**Filtering is deliberately disabled on the BPM column.** A range filter is the
+obvious thing to want for planning a class, but it would silently exclude ~32 % of the
+library — the exact failure class this project spent two stages eliminating. It should
+return only alongside an explicit indicator of how many tracks were excluded.
