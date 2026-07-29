@@ -610,3 +610,52 @@ leaves 166 playlists damaged, which repair would then have to re-fetch on a late
 **Progress reporting held up.** The overall bar was strictly monotonic across 119
 samples, confirming both the Stage 1 fix and Task 1's change to publish both
 fetch-phase totals before either phase begins.
+
+## Stage 2 results
+
+Verification run 2026-07-28, after all Stage 2 work landed — bounded concurrency,
+header staleness and pruning, an executing repair phase, retry, and the two fixes
+from the final whole-branch review.
+
+| Measure | Stage 1 baseline | Stage 2 run 1 (cold) | Stage 2 run 2 (immediate) |
+| --- | --- | --- | --- |
+| `complete` | 111 | **573** | **573** |
+| `failed` | 459 | **0** | **0** |
+| `incomplete` | 3 | **0** | **0** |
+| `byErrorKind` | `{ rate_limit: 462 }` | **`{}`** | **`{}`** |
+| Tracks stored | 7,065 | **21,353** | 21,353 |
+| Cycle Tempo | 500 / 3,390 | **3,398 / 3,398** | 3,398 / 3,398 |
+| Wall clock | ~30 s | 128 s | **0 s** |
+| Spotify requests | ~610 | ~700 | **0** |
+
+**The success criterion is met.** `incomplete` and `failed` are both zero across two
+consecutive runs, and the second run performs no network work at all — repair
+converges rather than re-fetching, and nothing ping-pongs between phases.
+
+Cycle Tempo holds all 3,398 tracks. It held 500 of 3,390 when this work started.
+
+### What the verification also confirmed
+
+**The measured-clean result survived the later commits.** The pool-only measurement
+was taken before header staleness, repair execution, retry, and two Critical fixes
+landed. Run 1 reproduces it exactly — none of that work reintroduced request volume
+or concurrency.
+
+**Progress reporting is monotonic** across the full 128 s run, with no regressions.
+
+**A real failure surfaces correctly.** Mid-verification the access token was rejected
+and the sync aborted. The backdrop showed "Sync stopped", named the cause, and
+offered a retry — exactly the behavior Stage 1's telemetry work was for.
+
+### A bug the live run caught that tests could not
+
+That failure exposed a defect in `App.jsx`'s error path. Its `catch` block did
+`return`, intending to keep the backdrop mounted so the user sees the reason — but
+`setIsLoading(false)` sat in the `finally`, and **`finally` runs even on the way out
+of a `return`**. The backdrop unmounted regardless and a real HTTP 403 produced a
+completely silent empty table: precisely the outcome that code exists to prevent.
+
+Fixed by clearing the loading flag on the success path only. This also produced the
+first test for `App.jsx`, verified to fail without the fix. Two rounds of unit tests
+and three code reviews had passed over this path without catching it, because nothing
+rendered the component against a rejecting sync.
