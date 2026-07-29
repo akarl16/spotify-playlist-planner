@@ -264,47 +264,36 @@ async function getStorageStats() {
     return stats;
 }
 
-/**
- * Get all unique tracks from playlists that don't have audio features (BPM) stored
- * @returns {Promise<Array>} Array of track objects needing BPM analysis
- */
-async function getTracksNeedingBpmAnalysis() {
-    const tracksNeedingAnalysis = [];
-    const seenTrackIds = new Set();
-    
-    try {
-        const playlists = await db.getAll('playlists');
-        
-        for (const playlist of playlists) {
-            if (playlist.trackList) {
-                for (const item of playlist.trackList) {
-                    const track = item.track;
-                    if (track && track.id && !seenTrackIds.has(track.id)) {
-                        seenTrackIds.add(track.id);
-                        
-                        // Check if we already have audio features for this track
-                        const existingFeatures = await getTrackAudioFeatures(track.id);
-                        // Skip if we have features with tempo OR if we already checked and found nothing
-                        const alreadyChecked = existingFeatures && (
-                            existingFeatures.tempo || 
-                            existingFeatures.source === 'getsongbpm-notfound'
-                        );
-                        if (!alreadyChecked) {
-                            tracksNeedingAnalysis.push({
-                                id: track.id,
-                                name: track.name,
-                                artists: track.artists?.map(a => a.name) || []
-                            });
-                        }
-                    }
-                }
-            }
-        }
-    } catch (error) {
-        console.error('Error getting tracks needing BPM analysis:', error);
+async function putTrackAudioFeaturesBatch(records) {
+    if (records.length === 0) return;
+
+    const tx = db.transaction('tracksAudioFeatures', 'readwrite');
+    for (const record of records) {
+        tx.store.put(record);
     }
-    
-    return tracksNeedingAnalysis;
+    await tx.done;
+}
+
+// A stored `reccobeats-notfound` record counts as present. Treating it as missing
+// would re-request every known-absent track on every sync — roughly 1,930 of them.
+//
+// Reads the store ONCE rather than issuing a get per id: this is called with ~7,100
+// track ids, and that many sequential IndexedDB round trips is measurably slow.
+async function getTrackIdsMissingAudioFeatures(trackIds) {
+    const stored = new Set((await db.getAllKeys('tracksAudioFeatures')).map(String));
+    return trackIds.filter((trackId) => !stored.has(String(trackId)));
+}
+
+async function getAudioFeaturesMap(trackIds) {
+    const wanted = new Set(trackIds);
+    const map = new Map();
+
+    for (const record of await db.getAll('tracksAudioFeatures')) {
+        if (wanted.has(record.id) && typeof record.tempo === 'number') {
+            map.set(record.id, record);
+        }
+    }
+    return map;
 }
 
 /**
@@ -349,6 +338,7 @@ async function deletePlaylists(playlistIds) {
 export {
     init, getPlaylist, getPlaylists, setPlaylist, setPlaylists, clearPlaylists,
     getTrackAudioFeatures, getTracksAudioFeatures, putTrackAudioFeatures,
-    getArtist, putArtist, getStorageStats, clearAllData, getTracksNeedingBpmAnalysis,
+    putTrackAudioFeaturesBatch, getTrackIdsMissingAudioFeatures, getAudioFeaturesMap,
+    getArtist, putArtist, getStorageStats, clearAllData,
     getSyncState, getAllSyncStates, putSyncState, deletePlaylists
 };
