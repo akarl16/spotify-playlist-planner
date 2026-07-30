@@ -710,3 +710,48 @@ genuinely slow tracks.
 obvious thing to want for planning a class, but it would silently exclude ~32 % of the
 library — the exact failure class this project spent two stages eliminating. It should
 return only alongside an explicit indicator of how many tracks were excluded.
+
+## Background tempo loading
+
+Verified 2026-07-29. Tempo fetching moved out of the blocking sync into a cancellable
+background loader, with progress shown as an app-bar chip.
+
+| Check | Result |
+| --- | --- |
+| Blocking backdrop phases | 4 — the tempo phase is gone, not merely idle |
+| Table interactive | Immediately after sync; tempo no longer blocks |
+| Chip while running | `♪ Tempo NN%` with a progress bar |
+| BPM cells | Fill in progressively, flushed on a 2 s timer |
+| Cancellation (refresh mid-load) | 59 % → clean restart at 1 %, monotonic |
+| Chip on clean completion | Disappears |
+| Final coverage | 7,135 / 7,135 — 4,935 tempo, 2,199 not-found |
+| 429s / console errors | Zero |
+
+### Why it moved
+
+A full tempo load is 179 batches at roughly 720 ms each — about two minutes. Inside
+the blocking backdrop that doubled the cold-sync wait for data that is an enhancement,
+not the product: the playlists are complete and correct before it starts.
+
+`runSync` now performs **no tempo network I/O**. It reads cached features from
+IndexedDB in one call, so known tempos render the instant the table appears, and the
+loader fills in the rest behind it.
+
+### Design points that needed deliberate care
+
+**The `features` phase was deleted from `PHASES`, not left rendering.** A backdrop row
+for a phase that never runs is the trap Stage 1 created with its non-executing repair
+row, and it took a live run to notice then.
+
+**Cancellation is checked between batches.** A refresh bumps a run id that the
+in-flight loader compares against its own. Without it, two loaders write to the same
+store and push into the same progress state. Verified live rather than assumed —
+two racing loaders would show erratic percentages; the observed series was monotonic.
+
+**Table updates are flushed on a timer, not per batch.** 179 rebuilds of a
+7,135-row virtualised grid would jank while scrolling.
+
+**The chip stays visible in a warning state if batches fail.** A failed batch leaves
+the BPM column genuinely incomplete, and those batches retry next launch — the user
+should not have to infer that from unexplained em-dashes. On clean completion the chip
+disappears entirely; a finished job leaves no permanent chrome.
