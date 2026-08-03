@@ -1,13 +1,13 @@
 {
   "files": {
     "main.css": "/spotify-playlist-planner/static/css/main.f0afa9af.css",
-    "main.js": "/spotify-playlist-planner/static/js/main.7a3efce4.js",
+    "main.js": "/spotify-playlist-planner/static/js/main.edd65bb1.js",
     "index.html": "/spotify-playlist-planner/index.html",
     "main.f0afa9af.css.map": "/spotify-playlist-planner/static/css/main.f0afa9af.css.map",
-    "main.7a3efce4.js.map": "/spotify-playlist-planner/static/js/main.7a3efce4.js.map"
+    "main.edd65bb1.js.map": "/spotify-playlist-planner/static/js/main.edd65bb1.js.map"
   },
   "entrypoints": [
     "static/css/main.f0afa9af.css",
-    "static/js/main.7a3efce4.js"
+    "static/js/main.edd65bb1.js"
   ]
 }
