@@ -24,7 +24,7 @@ function makeClient({ playlists, itemsByPlaylist, failOn = {} }) {
             const failure = failOn[playlistId];
             if (failure && offset === failure.atOffset) {
                 if (onApiCall) onApiCall({ status: failure.status, rateLimited: failure.status === 429 });
-                throw Object.assign(new Error('boom'), { kind: failure.kind, status: failure.status });
+                throw Object.assign(new Error('boom'), { kind: failure.kind, status: failure.status, sessionExpired: failure.sessionExpired });
             }
             if (onApiCall) onApiCall({ status: 200, rateLimited: false });
             const all = itemsByPlaylist[playlistId] ?? [];
@@ -680,4 +680,64 @@ test('runSync returns cached features without any tempo network call', async () 
     const result = await runSync({ emit: () => {}, spotifyClient: client });
 
     expect(result.featuresById.get('t1')).toMatchObject({ tempo: 128 });
+});
+
+test('forceHeaders re-reads headers even while the stored set is fresh', async () => {
+    // The Refresh button: a changed snapshot can only be seen in fresh headers.
+    await database.setPlaylists([header('old', '2026-01-01 Ride', 1, 's1')]);
+    localStorage.setItem('headers_synced_at', String(Date.now()));
+
+    const client = makeClient({
+        playlists: [header('old', '2026-01-01 Ride', 2, 's2')],
+        itemsByPlaylist: { old: [makeItem('t1'), makeItem('t2')] }
+    });
+    const spy = jest.spyOn(client, 'getUserPlaylistsPage');
+
+    await runSync({ emit: () => {}, spotifyClient: client, forceHeaders: true });
+
+    expect(spy).toHaveBeenCalled();
+    expect((await database.getPlaylist('old')).trackList).toHaveLength(2);
+});
+
+test('an expired session aborts the sync instead of failing every playlist in turn', async () => {
+    const client = makeClient({
+        playlists: [header('a', '2026-07-25 Ride', 1), header('b', '2026-07-26 Ride', 1)],
+        itemsByPlaylist: { a: [makeItem('t1')], b: [makeItem('t2')] },
+        failOn: {
+            a: { atOffset: 0, kind: 'auth', status: 401, sessionExpired: true },
+            b: { atOffset: 0, kind: 'auth', status: 401, sessionExpired: true }
+        }
+    });
+    const spy = jest.spyOn(client, 'getPlaylistItems');
+
+    await expect(runSync({ emit: () => {}, spotifyClient: client })).rejects.toMatchObject({ sessionExpired: true });
+
+    // Two pool workers may each have one request in flight, but no more follow.
+    expect(spy.mock.calls.length).toBeLessThanOrEqual(2);
+    expect((await database.getSyncState('a')).lastError).toMatchObject({ kind: 'auth', status: 401 });
+});
+
+test('runSync reports playlists that are still failing after the run', async () => {
+    const client = makeClient({
+        playlists: [header('ok', '2026-07-25 Ride', 1), header('bad', '2026-07-26 Ride', 1)],
+        itemsByPlaylist: { ok: [makeItem('t1')], bad: [makeItem('t2')] },
+        failOn: { bad: { atOffset: 0, kind: 'http', status: 404 } }
+    });
+
+    const result = await runSync({ emit: () => {}, spotifyClient: client });
+
+    expect(result.failures).toEqual([
+        { playlistId: 'bad', name: '2026-07-26 Ride', lastError: expect.objectContaining({ kind: 'http', status: 404 }) }
+    ]);
+});
+
+test('runSync reports no failures when every playlist synced', async () => {
+    const client = makeClient({
+        playlists: [header('ok', '2026-07-25 Ride', 1)],
+        itemsByPlaylist: { ok: [makeItem('t1')] }
+    });
+
+    const result = await runSync({ emit: () => {}, spotifyClient: client });
+
+    expect(result.failures).toEqual([]);
 });
