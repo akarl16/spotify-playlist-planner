@@ -1,4 +1,4 @@
-import { SpotifyApiError, spotifyFetch, __setAccessTokenForTests, computeBackoffMs, RETRY_MAX_ATTEMPTS, RETRY_MAX_SLEEP_MS } from './spotify.js';
+import { SpotifyApiError, spotifyFetch, isAuthorized, onSessionExpired, __setAccessTokenForTests, computeBackoffMs, RETRY_MAX_ATTEMPTS, RETRY_MAX_SLEEP_MS } from './spotify.js';
 
 beforeEach(() => {
     localStorage.clear();
@@ -183,4 +183,168 @@ test('a non-JSON 200 body throws a SpotifyApiError, not a raw SyntaxError', asyn
 
     await expect(spotifyFetch('/me/playlists', { sleep: jest.fn() }))
         .rejects.toMatchObject({ name: 'SpotifyApiError', kind: 'http' });
+});
+
+// --- Token refresh -----------------------------------------------------------
+
+const TOKEN_URL = 'https://accounts.spotify.com/api/token';
+
+// Routes token-endpoint calls to `token` and API calls to `api`, each a queue of
+// responses (the last one repeats).
+function routeFetch({ api = [], token = [] }) {
+    const take = (queue) => (queue.length > 1 ? queue.shift() : queue[0]);
+    global.fetch.mockImplementation(async (url) => (url === TOKEN_URL ? take(token) : take(api)));
+}
+
+const apiCalls = () => global.fetch.mock.calls.filter(([url]) => url !== TOKEN_URL);
+const tokenCalls = () => global.fetch.mock.calls.filter(([url]) => url === TOKEN_URL);
+
+test('a 401 refreshes the token once and retries the request with the new token', async () => {
+    localStorage.setItem('refresh_token', 'rt-old');
+    routeFetch({
+        api: [jsonResponse({}, { status: 401 }), jsonResponse({ items: ['ok'] })],
+        token: [jsonResponse({ access_token: 'fresh', expires_in: 3600 })]
+    });
+
+    await expect(spotifyFetch('/me/playlists')).resolves.toEqual({ items: ['ok'] });
+
+    expect(tokenCalls()).toHaveLength(1);
+    expect(apiCalls()[1][1].headers.Authorization).toBe('Bearer fresh');
+});
+
+test('a refresh response without refresh_token keeps the stored one instead of writing "undefined"', async () => {
+    // Spotify usually omits refresh_token from refresh responses.
+    localStorage.setItem('refresh_token', 'rt-old');
+    routeFetch({
+        api: [jsonResponse({}, { status: 401 }), jsonResponse({})],
+        token: [jsonResponse({ access_token: 'fresh', expires_in: 3600 })]
+    });
+
+    await spotifyFetch('/me/playlists');
+
+    expect(localStorage.getItem('refresh_token')).toBe('rt-old');
+});
+
+test('a refresh response with a rotated refresh_token stores the new one', async () => {
+    localStorage.setItem('refresh_token', 'rt-old');
+    routeFetch({
+        api: [jsonResponse({}, { status: 401 }), jsonResponse({})],
+        token: [jsonResponse({ access_token: 'fresh', expires_in: 3600, refresh_token: 'rt-new' })]
+    });
+
+    await spotifyFetch('/me/playlists');
+
+    expect(localStorage.getItem('refresh_token')).toBe('rt-new');
+});
+
+test.each(['undefined', 'null', ''])(
+    'a stored refresh_token of %p is treated as missing: no refresh attempt, session expired',
+    async (stored) => {
+        localStorage.setItem('refresh_token', stored);
+        const listener = jest.fn();
+        const unsubscribe = onSessionExpired(listener);
+        routeFetch({ api: [jsonResponse({}, { status: 401 })] });
+
+        await expect(spotifyFetch('/me/playlists')).rejects.toMatchObject({ kind: 'auth', status: 401, sessionExpired: true });
+
+        expect(tokenCalls()).toHaveLength(0);
+        expect(localStorage.getItem('refresh_token')).toBeNull();
+        expect(listener).toHaveBeenCalledTimes(1);
+        unsubscribe();
+    }
+);
+
+test('a rejected refresh (400 invalid_grant) reports the session as expired', async () => {
+    localStorage.setItem('refresh_token', 'rt-revoked');
+    const listener = jest.fn();
+    const unsubscribe = onSessionExpired(listener);
+    routeFetch({
+        api: [jsonResponse({}, { status: 401 })],
+        token: [jsonResponse({ error: 'invalid_grant' }, { status: 400 })]
+    });
+
+    await expect(spotifyFetch('/me/playlists')).rejects.toMatchObject({ sessionExpired: true });
+
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(apiCalls()).toHaveLength(1);
+    unsubscribe();
+});
+
+test('a transient refresh failure fails the request but keeps the session', async () => {
+    localStorage.setItem('refresh_token', 'rt-old');
+    const listener = jest.fn();
+    const unsubscribe = onSessionExpired(listener);
+    routeFetch({
+        api: [jsonResponse({}, { status: 401 })],
+        token: [jsonResponse({}, { status: 503 })]
+    });
+
+    const error = await spotifyFetch('/me/playlists').catch((err) => err);
+
+    expect(error).toMatchObject({ kind: 'auth', status: 401 });
+    expect(error.sessionExpired).toBeFalsy();
+    expect(listener).not.toHaveBeenCalled();
+    expect(localStorage.getItem('refresh_token')).toBe('rt-old');
+    unsubscribe();
+});
+
+test('a 401 after a successful refresh is thrown, not refreshed again', async () => {
+    localStorage.setItem('refresh_token', 'rt-old');
+    routeFetch({
+        api: [jsonResponse({}, { status: 401 })],
+        token: [jsonResponse({ access_token: 'fresh', expires_in: 3600 })]
+    });
+
+    await expect(spotifyFetch('/me/playlists')).rejects.toMatchObject({ status: 401 });
+
+    expect(tokenCalls()).toHaveLength(1);
+    expect(apiCalls()).toHaveLength(2);
+});
+
+test('concurrent 401s share a single token refresh', async () => {
+    localStorage.setItem('refresh_token', 'rt-old');
+    global.fetch.mockImplementation(async (url, init) => {
+        if (url === TOKEN_URL) return jsonResponse({ access_token: 'fresh', expires_in: 3600 });
+        return init.headers.Authorization === 'Bearer fresh'
+            ? jsonResponse({ ok: true })
+            : jsonResponse({}, { status: 401 });
+    });
+
+    await Promise.all([spotifyFetch('/a'), spotifyFetch('/b')]);
+
+    expect(tokenCalls()).toHaveLength(1);
+});
+
+test('a 403 does not trigger a token refresh — it is a permission error, not expiry', async () => {
+    localStorage.setItem('refresh_token', 'rt-old');
+    routeFetch({ api: [jsonResponse({}, { status: 403 })] });
+
+    await expect(spotifyFetch('/me/playlists')).rejects.toMatchObject({ status: 403, kind: 'auth' });
+
+    expect(tokenCalls()).toHaveLength(0);
+});
+
+test('a token known to be expired is refreshed before the request is sent', async () => {
+    __setAccessTokenForTests('stale', Date.now() - 1000);
+    localStorage.setItem('refresh_token', 'rt-old');
+    routeFetch({
+        api: [jsonResponse({ ok: true })],
+        token: [jsonResponse({ access_token: 'fresh', expires_in: 3600 })]
+    });
+
+    await spotifyFetch('/me/playlists');
+
+    expect(tokenCalls()).toHaveLength(1);
+    expect(apiCalls()).toHaveLength(1);
+    expect(apiCalls()[0][1].headers.Authorization).toBe('Bearer fresh');
+});
+
+test('isAuthorized treats a stored "undefined" refresh_token as missing', async () => {
+    __setAccessTokenForTests(undefined);
+    localStorage.setItem('refresh_token', 'undefined');
+
+    await expect(isAuthorized()).resolves.toBe(false);
+
+    expect(tokenCalls()).toHaveLength(0);
+    expect(localStorage.getItem('refresh_token')).toBeNull();
 });

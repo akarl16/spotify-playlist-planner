@@ -2,6 +2,9 @@ import SpotifyWebApi from "spotify-web-api-js";
 
 let scope = "playlist-read-collaborative playlist-read-private playlist-modify-public playlist-modify-private streaming user-read-email user-read-private user-read-playback-state user-modify-playback-state";
 let access_token;
+// Epoch ms when access_token stops working, or null when unknown. Lets a call
+// refresh ahead of time instead of spending a request on a guaranteed 401.
+let accessTokenExpiresAt = null;
 
 function setWithExpiry(key, value, ttl) {
 	const now = new Date()
@@ -32,6 +35,34 @@ function getWithExpiry(key) {
 		return null
 	}
 	return item.value
+}
+
+// Spotify usually omits refresh_token from refresh responses. An unguarded write
+// once stored the literal string "undefined", which then failed every refresh.
+const MISSING_REFRESH_TOKEN_VALUES = new Set(['', 'undefined', 'null']);
+
+// Returns the stored refresh token, or null. A corrupt value is discarded so the
+// app falls through to the sign-in flow instead of retrying it forever.
+function readRefreshToken() {
+    const stored = localStorage.getItem('refresh_token');
+    if (stored === null) return null;
+    if (MISSING_REFRESH_TOKEN_VALUES.has(stored)) {
+        localStorage.removeItem('refresh_token');
+        return null;
+    }
+    return stored;
+}
+
+function storeTokens(data) {
+    const ttl = data.expires_in * 1000;
+    setWithExpiry('access_token', data.access_token, ttl);
+    // Only overwrite when Spotify actually rotated it.
+    if (data.refresh_token) {
+        localStorage.setItem('refresh_token', data.refresh_token);
+    }
+    access_token = data.access_token;
+    accessTokenExpiresAt = Date.now() + ttl;
+    spotifyApi.setAccessToken(access_token);
 }
 
 function generateRandomString(length) {
@@ -103,8 +134,7 @@ async function retrieveAccessTokenFromAuth(authorization_code) {
     }
     const data = await response.json();
 
-    setWithExpiry('access_token', data.access_token, data.expires_in * 1000);
-    localStorage.setItem('refresh_token', data.refresh_token);
+    storeTokens(data);
     localStorage.removeItem('authorization_code');
     localStorage.removeItem('code_verifier');
 
@@ -160,10 +190,39 @@ async function retrieveAccessTokenFromRefresh(refresh_token) {
 
     const data = await response.json();
 
-    setWithExpiry('access_token', data.access_token, data.expires_in * 1000);
-    localStorage.setItem('refresh_token', data.refresh_token);
+    storeTokens(data);
 
     return data.access_token;
+}
+
+let refreshInFlight = null;
+
+// Resolves to a fresh access token, or null. Concurrent callers share one request:
+// the sync pool runs two workers, and both see the same expired token at once.
+function refreshAccessToken() {
+    if (!refreshInFlight) {
+        refreshInFlight = (async () => {
+            const refresh_token = readRefreshToken();
+            if (!refresh_token) return null;
+            return await retrieveAccessTokenFromRefresh(refresh_token);
+        })().finally(() => {
+            refreshInFlight = null;
+        });
+    }
+    return refreshInFlight;
+}
+
+const sessionExpiredListeners = new Set();
+
+// Called when the session cannot be renewed without the user signing in again.
+// Returns an unsubscribe function.
+function onSessionExpired(listener) {
+    sessionExpiredListeners.add(listener);
+    return () => sessionExpiredListeners.delete(listener);
+}
+
+function notifySessionExpired() {
+    for (const listener of [...sessionExpiredListeners]) listener();
 }
 
 function authorizeSpotify() {
@@ -204,7 +263,7 @@ async function isAuthorized() {
     
     if (!access_token) {
         console.debug("No access_token found in local storage");
-        let refresh_token = localStorage.getItem("refresh_token");
+        let refresh_token = readRefreshToken();
         if(refresh_token) {
             access_token = await retrieveAccessTokenFromRefresh(refresh_token);
             if (access_token) {
@@ -222,6 +281,7 @@ async function isAuthorized() {
         }
     } else {
         console.debug("Token found in storage");
+        accessTokenExpiresAt = JSON.parse(localStorage.getItem("access_token")).expiry;
         spotifyApi.setAccessToken(access_token);
         return true;
     }
@@ -356,7 +416,7 @@ async function spotifyFetchOnce(path, { method = 'GET', body = null, onApiCall =
     }
 }
 
-async function spotifyFetch(path, { method = 'GET', body = null, onApiCall = null, maxAttempts = RETRY_MAX_ATTEMPTS, sleep = defaultSleep } = {}) {
+async function spotifyFetchWithRetry(path, { method = 'GET', body = null, onApiCall = null, maxAttempts = RETRY_MAX_ATTEMPTS, sleep = defaultSleep } = {}) {
     let lastError;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -372,6 +432,41 @@ async function spotifyFetch(path, { method = 'GET', body = null, onApiCall = nul
     throw lastError;
 }
 
+// Refresh this long before the stated expiry, so a request in flight at the
+// boundary is not the one that finds out.
+const TOKEN_EXPIRY_MARGIN_MS = 60 * 1000;
+
+// Access tokens last an hour, but the page can stay open far longer. Without this,
+// every call after the first hour failed with 401 until a reload.
+async function spotifyFetch(path, options = {}) {
+    if (accessTokenExpiresAt !== null && Date.now() >= accessTokenExpiresAt - TOKEN_EXPIRY_MARGIN_MS) {
+        // A failure here is not final: the request's own 401 path below decides.
+        await refreshAccessToken();
+    }
+
+    try {
+        return await spotifyFetchWithRetry(path, options);
+    } catch (err) {
+        // 403 is a permission problem, not expiry; refreshing cannot fix it.
+        const expired = err.status === 401 || (err.kind === 'auth' && err.status === 0);
+        if (!expired) throw err;
+
+        const token = await refreshAccessToken();
+        if (!token) {
+            // No usable refresh token left means only signing in again can help.
+            // Otherwise the refresh failed transiently and the session survives.
+            if (!readRefreshToken()) {
+                err.sessionExpired = true;
+                notifySessionExpired();
+            }
+            throw err;
+        }
+
+        // One refresh per request. A 401 with a brand-new token is thrown as-is.
+        return await spotifyFetchWithRetry(path, options);
+    }
+}
+
 async function getUserPlaylistsPage({ limit = 50, offset = 0, onApiCall = null } = {}) {
     return await spotifyFetch(`/me/playlists?limit=${limit}&offset=${offset}`, { onApiCall });
 }
@@ -385,8 +480,9 @@ async function addItemsToPlaylist(playlistId, uris) {
 }
 
 // Test seam only — production code sets access_token through isAuthorized().
-function __setAccessTokenForTests(token) {
+function __setAccessTokenForTests(token, expiresAt = null) {
     access_token = token;
+    accessTokenExpiresAt = expiresAt;
 }
 
 const clientId = "c4145d13614447e9b3bcd287499086f4";
@@ -401,6 +497,7 @@ export {
     getPlaylistItems,
     addItemsToPlaylist,
     spotifyFetch,
+    onSessionExpired,
     SpotifyApiError,
     __setAccessTokenForTests,
     computeBackoffMs,
