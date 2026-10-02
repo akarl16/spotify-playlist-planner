@@ -1,0 +1,21 @@
+src/spotify.test.js
+  s_045f81d076b838::t_3d293b3fcd142f 1,187-350
+src/spotify.js
+  s_045f81d076b838::t_0d5a7ba1897b29 5-7,40-67,137,193,198-227,266,284,419,435-469,483,485,500
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a6ce70c6f61c15d4b4229123741aa6970b15d786",
+  "prompts": {},
+  "sessions": {
+    "s_045f81d076b838": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a10ab962-4794-4ea4-87d1-bfc0b6d2982d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Adam Karl <akarl16@gmail.com>"
+    }
+  }
+}
