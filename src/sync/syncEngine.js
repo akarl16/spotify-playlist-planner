@@ -1,7 +1,7 @@
 import * as spotify from '../spotify.js';
 import * as database from '../database.js';
 import { CLASS_DATE_REGEX } from '../trackLibrary.js';
-import { recordAttempt, recordSuccess, recordFailure, getPlaylistIdsNeedingRepair, needsSync } from './syncState.js';
+import { SYNC_STATUS, recordAttempt, recordSuccess, recordFailure, getPlaylistIdsNeedingRepair, needsSync } from './syncState.js';
 import { mapWithConcurrency } from './pool.js';
 
 const LIBRARY_REGEX = /\[LIBRARY\]/;
@@ -38,10 +38,14 @@ const SYNC_CONCURRENCY = 2;
  * fetched only when the store is empty, no pruning, and a repair phase that
  * reports its queue without executing. All of this changes in stage 2.
  */
-async function runSync({ emit, spotifyClient = spotify }) {
+//
+// `forceHeaders` bypasses the header staleness window. The Refresh button needs it:
+// a changed snapshot_id only shows up in freshly fetched headers, so without it a
+// Refresh within 24 hours of the last header sync could never pull new tracks.
+async function runSync({ emit, spotifyClient = spotify, forceHeaders = false }) {
     emit({ type: 'sync:start', at: Date.now() });
 
-    const headers = await syncPlaylistHeaders({ emit, spotifyClient });
+    const headers = await syncPlaylistHeaders({ emit, spotifyClient, forceHeaders });
 
     const libraryHeaders = headers.filter(
         (playlist) => LIBRARY_REGEX.test(playlist.name) || LIBRARY_REGEX.test(playlist.description ?? '')
@@ -78,17 +82,31 @@ async function runSync({ emit, spotifyClient = spotify }) {
     }
     const featuresById = await database.getAudioFeaturesMap(Array.from(trackIds));
 
+    const failures = await collectFailures([...libraryHeaders, ...classHeaders]);
+
     emit({ type: 'sync:complete', at: Date.now() });
 
-    return { libraryPlaylists: mergedLibrary, classPlaylists: mergedClass, featuresById };
+    return { libraryPlaylists: mergedLibrary, classPlaylists: mergedClass, featuresById, failures };
 }
 
-async function syncPlaylistHeaders({ emit, spotifyClient }) {
+// Per-playlist failures do not fail the run, so without this they were only
+// visible in IndexedDB. Read after repair, so these are the ones still failing.
+async function collectFailures(inScopeHeaders) {
+    const states = await database.getAllSyncStates();
+    const stateById = new Map(states.map((state) => [state.playlistId, state]));
+
+    return inScopeHeaders
+        .map((header) => ({ header, state: stateById.get(header.id) }))
+        .filter(({ state }) => state && state.status !== SYNC_STATUS.COMPLETE && state.lastError)
+        .map(({ header, state }) => ({ playlistId: header.id, name: header.name, lastError: state.lastError }));
+}
+
+async function syncPlaylistHeaders({ emit, spotifyClient, forceHeaders }) {
     emit({ type: 'phase:start', phase: 'headers', total: 0, at: Date.now() });
 
     const stored = await database.getPlaylists();
 
-    if (headersAreFresh(stored.length)) {
+    if (!forceHeaders && headersAreFresh(stored.length)) {
         emit({ type: 'phase:progress', phase: 'headers', done: stored.length, total: stored.length });
         emit({ type: 'phase:complete', phase: 'headers', at: Date.now() });
         return stored;
@@ -235,6 +253,11 @@ async function syncOnePlaylist(header, phase, { emit, spotifyClient, force = fal
             storedTrackCount: storedTrackList.length,
             tracksTotal
         });
+
+        // Every later request would fail the same way. Abort so the user sees one
+        // "reconnect" prompt instead of a long run of identical failures.
+        if (error.sessionExpired) throw error;
+
         return playlist;
     }
 
