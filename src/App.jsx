@@ -31,6 +31,8 @@ import useScrollTrigger from '@mui/material/useScrollTrigger';
 import CssBaseline from '@mui/material/CssBaseline';
 import Fade from '@mui/material/Fade';
 import Fab from '@mui/material/Fab';
+import Snackbar from '@mui/material/Snackbar';
+import Alert from '@mui/material/Alert';
 
 import "json.date-extensions";
 import * as spotify from "./spotify.js";
@@ -85,6 +87,10 @@ function App() {
   // eslint-disable-next-line no-unused-vars
   const [playTrackUri, setPlayTrackUri] = useState([]);
   const [tempoProgress, setTempoProgress] = useState(null);
+  // Set when the Spotify session cannot be renewed without signing in again.
+  const [isSessionExpired, setIsSessionExpired] = useState(false);
+  // Playlists still failing after the last sync, from runSync's `failures`.
+  const [syncFailures, setSyncFailures] = useState([]);
   // Features arrive per batch but are flushed to the table on a timer — 179
   // rebuilds of a 7,000-row virtualised grid would jank while scrolling.
   const pendingTempoRef = React.useRef(new Map());
@@ -107,6 +113,8 @@ function App() {
     checkAuth()
       .catch(console.error);;
   }, []);
+
+  useEffect(() => spotify.onSessionExpired(() => setIsSessionExpired(true)), []);
 
   // #endregion
 
@@ -176,8 +184,11 @@ function App() {
       });
   }, [flushPendingTempo]);
 
-  const getData = useCallback(async () => {
+  // `options` is read defensively: SyncBackdrop's retry passes a click event here.
+  const getData = useCallback(async (options) => {
+    const forceHeaders = options?.forceHeaders === true;
     setIsLoading(true);
+    setSyncFailures([]);
 
     // Engine events are pushed through the pure reducer; React only ever sees
     // the reduced view state.
@@ -185,15 +196,20 @@ function App() {
     const ticker = setInterval(() => emit({ type: 'tick', at: Date.now() }), 1000);
 
     try {
-      const { libraryPlaylists: _libraryPlaylists, classPlaylists: _classPlaylists, featuresById } = await runSync({ emit });
+      const { libraryPlaylists: _libraryPlaylists, classPlaylists: _classPlaylists, featuresById, failures } = await runSync({ emit, forceHeaders });
 
       setLibraryPlaylists(_libraryPlaylists);
       setClassPlaylists(_classPlaylists);
       setTrackLibrary(buildTrackLibrary(_libraryPlaylists, _classPlaylists, Date.now(), featuresById));
       setIsLoading(false);
+      setSyncFailures(failures ?? []);
       startBackgroundTempoLoad([..._libraryPlaylists, ..._classPlaylists]);
     } catch (error) {
       console.error('Sync failed', error);
+      if (error?.sessionExpired) {
+        // The reconnect prompt replaces the backdrop; retrying cannot help.
+        setIsSessionExpired(true);
+      }
       // Deliberately does NOT clear isLoading — the backdrop has to stay mounted
       // to carry the reason and offer a retry.
       //
@@ -227,7 +243,7 @@ function App() {
 
   const refreshData = async () => {
     setTrackLibrary([]);
-    await getData();
+    await getData({ forceHeaders: true });
   };
 
   const refreshAuthorization = async () => {
@@ -685,10 +701,10 @@ function App() {
 
       <Stack className="App" spacing={1}>
         {console.debug("Render")}
-        {isLoading ? (
+        {isLoading && !isSessionExpired ? (
           <SyncBackdrop telemetry={telemetry} onRetry={getData} />
         )
-          : isSpotifyAuthorized ? (
+          : isSpotifyAuthorized && !isSessionExpired ? (
             <Fragment>
               <TopShell />
               <MainContent />
@@ -703,6 +719,11 @@ function App() {
                 <h1 className="auth-title">Playlist Planner</h1>
                 <p className="auth-subtitle">Your ultimate tool for managing Spotify playlists</p>
               </Box>
+              {isSessionExpired && (
+                <Alert severity="warning" variant="filled">
+                  Your Spotify session expired. Reconnect to keep syncing your playlists.
+                </Alert>
+              )}
               <Button 
                 size="large" 
                 color="success" 
@@ -724,11 +745,24 @@ function App() {
                 startIcon={<FontAwesomeIcon fontSize="inherit" icon={faSpotify} />} 
                 onClick={spotify.authorizeSpotify}
               >
-                Connect to Spotify
+                {isSessionExpired ? 'Reconnect to Spotify' : 'Connect to Spotify'}
               </Button>
             </Box>
           )}
       </Stack>
+      <Snackbar
+        open={syncFailures.length > 0 && !isLoading && !isSessionExpired}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert severity="warning" variant="filled" onClose={() => setSyncFailures([])}>
+          {syncFailures.length} {syncFailures.length === 1 ? 'playlist' : 'playlists'} failed to sync:{' '}
+          {syncFailures.slice(0, 3).map((failure) =>
+            `${failure.name} (${failure.lastError?.status || failure.lastError?.kind || 'error'})`
+          ).join(', ')}
+          {syncFailures.length > 3 ? `, and ${syncFailures.length - 3} more` : ''}.
+          {' '}They will be retried on the next refresh.
+        </Alert>
+      </Snackbar>
       </Box>
     </ThemeProvider>
   );
